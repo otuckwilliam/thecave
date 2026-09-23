@@ -1,0 +1,4 @@
+.DS_Store
+# business data — kept on this computer only (the repo is public)
+data/
+supabase/5-dukapro-import.sql
