@@ -3,3 +3,5 @@
 data/
 supabase/5-dukapro-import.sql
 supabase/6-past-orders-import.sql
+supabase/7-past-expenses-import.sql
+supabase/8-clean-tests-and-past-sales.sql

@@ -418,22 +418,29 @@ function recentRestocks(){
   ${r.map(x=>`<tr><td class="num">${niceDate(x.date)}</td><td>${esc(x.name)}</td><td class="r num">${x.qty}</td><td class="r num">${money(x.qty*x.unitCost)}</td><td class="muted">${esc(x.supplier||"—")}${x.orderNo?` <span class="small">· ${esc(x.orderNo)}</span>`:""}</td></tr>`).join("")}</tbody></table></div></section>`;
 }
 
+function expRange(){
+  const cur=ymd(new Date()).slice(0,7),m=S.expMonth&&S.expMonth<cur?S.expMonth:cur;
+  const [y,mo]=m.split("-").map(Number),last=ymd(new Date(y,mo,0));
+  const label=new Date(y,mo-1,1).toLocaleDateString("en-GB",{month:"long",year:"numeric"});
+  return [m+"-01",m===cur?ymd(new Date()):last,label,m===cur];
+}
 function vExpenses(){
-  const [from,to]=periodRange("month");
+  const [from,to,label,isCur]=expRange();
   const ex=collect("expenses",from,to);
   const tot=ex.reduce((a,e)=>a+num(e.amount),0);
   const byCat={};ex.forEach(e=>byCat[e.cat]=(byCat[e.cat]||0)+num(e.amount));
   const cats=Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
   return `
   <div class="row between"><h2>Expenses</h2>${S.readOnly?"":'<button class="btn primary" data-act="addExp">Add expense</button>'}</div>
+  <div class="row" style="gap:8px;align-items:center"><button class="btn ghost small" data-act="expMonth" data-v="-1" aria-label="Previous month">‹ Previous</button><b style="min-width:9em;text-align:center">${esc(label)}</b><button class="btn ghost small" data-act="expMonth" data-v="1" aria-label="Next month"${isCur?" disabled":""}>Next ›</button>${isCur?"":'<button class="btn ghost small" data-act="expMonth" data-v="0">This month</button>'}</div>
   <div class="two">
     <section class="panel">
-      <div class="row between"><h3>This month</h3><b class="num">${money(tot)}</b></div>
-      ${cats.length?cats.map(([c,v])=>`<div style="display:grid;gap:4px"><div class="row between small"><span>${esc(c)}</span><span class="num">${money(v)}</span></div><div class="bar"><i style="width:${(v/cats[0][1]*100).toFixed(1)}%"></i></div></div>`).join(""):'<div class="empty">No expenses this month.</div>'}
+      <div class="row between"><h3>${isCur?"This month":esc(label)}</h3><b class="num">${money(tot)}</b></div>
+      ${cats.length?cats.map(([c,v])=>`<div style="display:grid;gap:4px"><div class="row between small"><span>${esc(c)}</span><span class="num">${money(v)}</span></div><div class="bar"><i style="width:${(v/cats[0][1]*100).toFixed(1)}%"></i></div></div>`).join(""):'<div class="empty">No expenses '+(isCur?"this month":"in "+esc(label))+'.</div>'}
       <p class="muted small" style="margin:0">Stock you buy is recorded under <b>Stock → Restock</b>, not here, so it isn't counted twice in profit.</p>
     </section>
     <section class="panel">
-      <h3>Entries this month</h3>
+      <h3>Entries · ${isCur?"this month":esc(label)}</h3>
       ${ex.length?`<div class="tbl"><table><tbody>${ex.map(e=>`<tr><td class="num small">${niceDate(e.date)}</td><td>${esc(e.cat)}<div class="muted small">${esc(e.note||"")}</div></td><td class="r num">${money(e.amount)}</td><td class="r">${!ADM()?"":`<button class="btn ghost small${S.confirm==="e"+e.id?" danger":""}" data-act="delExp" data-id="${e.id}" data-doc="${e._doc}">${S.confirm==="e"+e.id?"Confirm":"Delete"}</button>`}</td></tr>`).join("")}</tbody></table></div>`:'<div class="empty">Add rent, wages, LUKU, transport and other running costs as you pay them.</div>'}
     </section>
   </div>`;
@@ -1142,6 +1149,7 @@ document.addEventListener("click",e=>{
     case"restock":if(P)restockForm(P);break;
     case"count":if(P)countForm(P,stockMap()[P.id]);break;
     case"addExp":expenseForm();break;
+    case"expMonth":{const v=+b.dataset.v,cur=ymd(new Date()).slice(0,7);if(!v){S.expMonth=null}else{const [y,mo]=(S.expMonth||cur).split("-").map(Number);const n=ymd(new Date(y,mo-1+v,1)).slice(0,7);S.expMonth=n>=cur?null:n}render();break}
     case"newProd":productForm(null);break;
     case"editProd":if(P)productForm(P);break;
     case"archiveProd":{if(b.dataset.armed!=="1"){b.dataset.armed="1";b.textContent="Tap again to remove";break}writeProduct(b.dataset.id,{active:false},true);closeModal();toast("Product removed");break}
