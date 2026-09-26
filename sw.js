@@ -1,5 +1,5 @@
 // The Cave Ledger — offline support. Keeps the app itself on the device so it opens without internet.
-const CACHE = "cave-ledger-v5";
+const CACHE = "cave-ledger-v6";
 const SHELL = ["./", "index.html", "config.js", "js/app.js", "vendor/supabase.js", "vendor/jspdf.umd.min.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); self.skipWaiting(); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))); self.clients.claim(); });

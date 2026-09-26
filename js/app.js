@@ -256,6 +256,8 @@ function sellMatches(){
     .sort((a,b)=>((sm[b.id]>0)-(sm[a.id]>0))||((a.rank||999)-(b.rank||999))||a.name.localeCompare(b.name)).slice(0,8);
 }
 function prow(p,sm,first){const q=sm[p.id];return`<button class="prow${q<=0?" out":""}${first?" first":""}${S.flash===p.id?" flash":""}" data-act="add" data-id="${p.id}"><span class="pn"><b>${esc(p.name)}</b> <span class="muted small">${esc(p.size||"")}</span></span><span class="num pp">${money(p.price)}</span><span class="num ps${q<=0?" bad":q<=num(p.reorder)?" warn":""}">${q} left</span><span class="plus" aria-hidden="true">+</span></button>`}
+const FINE=window.matchMedia&&matchMedia("(pointer:fine)").matches; // mouse/keyboard counter vs phone
+function revealTicket(){const tk=document.querySelector(".ticket .total");if(!tk)return;const r=tk.getBoundingClientRect();if(r.bottom>innerHeight-8)tk.scrollIntoView({block:"end",behavior:"smooth"})}
 function vSell(){
   const sm=stockMap(),t=today(),matches=sellMatches(),T=S.ticket;
   const quick=prodList().filter(p=>sm[p.id]>0).sort((a,b)=>(a.rank||999)-(b.rank||999)).slice(0,12);
@@ -276,16 +278,15 @@ function vSell(){
       <div class="searchwrap"><input type="search" id="q" placeholder="Type a drink… e.g. serengeti, jameson 750" value="${esc(S.q)}" autocomplete="off" aria-label="Search drinks"></div>
       ${S.q&&matches.length?'<div class="muted small">Press <b>Enter</b> to add the highlighted drink, or tap any row.</div>':""}
       ${S.q?`<div class="plist">${matches.length?matches.map((p,i)=>prow(p,sm,i===0)).join(""):'<div class="empty">No drink matches “'+esc(S.q)+'”.</div>'}</div>`:
-      `${S.cat&&S.cat!=="All"?`<div class="row between"><h3>${esc(S.cat)}</h3><button class="btn ghost small" data-act="cat" data-v="All">← Quick picks</button></div><div class="plist tall">${catList.map(p=>prow(p,sm)).join("")}</div>`:
-      `<h3>Quick picks · best sellers</h3>
-      <div class="qgrid">${quick.map(p=>`<button class="qbtn${S.flash===p.id?" flash":""}" data-act="add" data-id="${p.id}"><b>${esc(p.name)}</b><span class="muted small">${esc(p.size||"")}</span><span class="num qp">${money(p.price)}</span></button>`).join("")||'<div class="empty">Nothing in stock yet — do a stock count.</div>'}</div>
-      <div class="chips">${cats.map(c=>`<button class="chip" data-act="cat" data-v="${esc(c)}">${esc(c)}</button>`).join("")}</div>`}`}
+      `${S.cat&&S.cat!=="All"?`<div class="row between"><h3>${esc(S.cat)}</h3><button class="btn ghost small" data-act="cat" data-v="All">← Best sellers</button></div><div class="plist tall">${catList.map(p=>prow(p,sm)).join("")}</div>`:
+      `<div class="qstrip" aria-label="Best sellers">${quick.map(p=>{const inT=T.items.find(i=>i.pid===p.id);return`<button class="qpill${inT?" on":""}${S.flash===p.id?" flash":""}" data-act="add" data-id="${p.id}"><span class="qn">${esc(p.name)}${p.size?` <span class="muted">${esc(p.size)}</span>`:""}</span><span class="num qp">${Math.round(num(p.price)).toLocaleString("en-US")}</span>${inT?`<span class="qc num">${inT.qty}</span>`:""}</button>`}).join("")||'<div class="empty">Nothing in stock yet — do a stock count.</div>'}</div>
+      <div class="chips browse"><span class="muted small">Browse:</span>${cats.map(c=>`<button class="chip" data-act="cat" data-v="${esc(c)}">${esc(c)}</button>`).join("")}</div>`}`}
     </section>
 
     <section class="panel ticket">
-      <div class="row between"><div>${editing?`<span class="pill low">Open tab</span> <b class="tlabel">${esc(T.label)}</b>`:"<h3>New sale</h3>"}</div>
+      <div class="row between"><div>${editing?`<span class="pill low">Open tab</span> <b class="tlabel">${esc(T.label)}</b>`:`<h3>New sale${T.items.length?` <span class="pill n num">${T.items.reduce((a,i)=>a+num(i.qty),0)} item${T.items.reduce((a,i)=>a+num(i.qty),0)===1?"":"s"}</span>`:""}</h3>`}</div>
         ${T.items.length||editing?`<button class="btn ghost small" data-act="clearTicket">${editing?"Close without saving":"Clear"}</button>`:""}</div>
-      <div class="tlines">${T.items.length?T.items.map((i,ix)=>`<div class="tline">
+      <div class="tlines">${T.items.length?T.items.map((i,ix)=>`<div class="tline${S.flash===i.pid?" flash":""}">
           <div class="tn"><b>${esc(i.name)}</b> <span class="muted small">${esc(i.size||"")}</span>
             <div class="muted small">@ <input class="pin num" type="text" inputmode="numeric" id="pr${ix}" data-act="price" data-ix="${ix}" value="${i.price}" aria-label="Price each"></div></div>
           <div class="qty"><button data-act="qty" data-ix="${ix}" data-d="-1" aria-label="One less">−</button><span class="num">${i.qty}</span><button data-act="qty" data-ix="${ix}" data-d="1" aria-label="One more">+</button></div>
@@ -334,7 +335,9 @@ function sellAct(a,b){
   const T=S.ticket,P=S.products[b.dataset.id],t=today();
   const findSale=id=>collect("sales","0000-00-00","9999-99-99",true).find(x=>x.id===id);
   switch(a){
-    case"add":if(P){addToTicket(P);S.q="";render();setTimeout(()=>{S.flash=null;const q=$("#q");q&&q.focus()},250)}return true;
+    case"add":if(P){const fromSearch=!!S.q;addToTicket(P);S.q="";render();
+      if(!FINE)revealTicket();
+      setTimeout(()=>{S.flash=null;if(FINE||fromSearch){const q=$("#q");q&&q.focus({preventScroll:!FINE})}},250)}return true;
     case"cat":S.cat=b.dataset.v;render();return true;
     case"qty":{const i=T.items[+b.dataset.ix];if(!i)return true;i.qty+=+b.dataset.d;if(i.qty<=0)T.items.splice(+b.dataset.ix,1);T.dirty=true;render();return true}
     case"clearTicket":newTicket();render();return true;
