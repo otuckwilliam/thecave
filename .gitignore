@@ -6,3 +6,4 @@ supabase/6-past-orders-import.sql
 supabase/7-past-expenses-import.sql
 supabase/8-clean-tests-and-past-sales.sql
 supabase/10-clean-27sep-tests.sql
+supabase/11-update-24-26-sep.sql

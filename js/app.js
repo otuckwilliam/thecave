@@ -585,17 +585,21 @@ function vStock(){
   const sm=stockMap(),all=prodList(),oo=onOrderMap();
   const counts={Low:0,Out:0};let value=0;
   all.forEach(p=>{const q=sm[p.id],st=status(p,q)[1];if(st==="Low")counts.Low++;if(st==="Out")counts.Out++;value+=Math.max(0,q)*num(p.cost)});
-  const list=all.filter(p=>S.stockFilter==="All"||status(p,sm[p.id])[1]===S.stockFilter);
+  const q=(S.stq||"").trim().toLowerCase(),words=q.split(/\s+/).filter(Boolean);
+  const hit=p=>{const h=(p.name+" "+(p.size||"")+" "+(p.cat||"")+" "+(p.supplier||"")).toLowerCase();return words.every(w=>h.includes(w))};
+  const list=all.filter(p=>(S.stockFilter==="All"||status(p,sm[p.id])[1]===S.stockFilter)&&hit(p));
   const neverCounted=all.filter(p=>p.needsCount).length;
   return `
   <div class="row between"><h2>Stock</h2><div class="row"><span class="muted small">On hand at cost: <b class="num">${money(value)}</b></span>${!ADM()?"":`<button class="btn" data-act="countAll">Count all</button><button class="btn primary" data-act="startOrder">Order low stock${needsOrder().length?" ("+needsOrder().length+")":""}</button>`}</div></div>
   ${neverCounted?`<div class="banner">${neverCounted} product${neverCounted>1?"s":""} still need${neverCounted>1?"":"s"} a fresh count. Figures shown come from the paper stock take of 17 July, so they don't include anything sold since. Use <b>Count all</b> to enter what's on the shelf and in the store room — from then on, sales and restocks update the numbers automatically.</div>`:""}
   <section class="panel">
+    <div class="searchwrap"><input type="search" id="stq" placeholder="Search stock… name, size, type or supplier" value="${esc(S.stq||"")}" autocomplete="off" aria-label="Search stock"></div>
+    ${q?`<div class="muted small">${list.length} product${list.length===1?"":"s"} match “${esc(S.stq.trim())}”${S.stockFilter==="All"?"":" in "+S.stockFilter}</div>`:""}
     <div class="chips">${["All","Low","Out","OK"].map(c=>`<button class="chip" data-act="sf" data-v="${c}" aria-pressed="${S.stockFilter===c}">${c}${c==="Low"&&counts.Low?" ("+counts.Low+")":""}${c==="Out"&&counts.Out?" ("+counts.Out+")":""}</button>`).join("")}</div>
     ${list.length?`<div class="tbl"><table><thead><tr><th>Product</th><th class="r">On hand</th><th>Status</th><th class="r">Reorder at</th><th class="r">On order</th><th></th></tr></thead><tbody>
     ${list.map(p=>{const q=sm[p.id],[c,l]=status(p,q);return`<tr><td><b>${esc(p.name)}</b> <span class="muted small">${esc(p.size||"")}</span><div class="muted small">${p.countedAt&&!p.needsCount?"Counted "+niceDate(ymd(new Date(p.countedAt))):p.countSource?"From paper stock take, 17 Jul — please recount":"Not counted yet"}</div></td><td class="r num"><b>${q}</b></td><td><span class="pill ${c}">${l}</span></td><td class="r num muted">${num(p.reorder)}</td><td class="r num">${oo[p.id]||""}</td>
     <td class="r"><div class="row" style="justify-content:flex-end;flex-wrap:nowrap">${!ADM()?"":`<button class="btn small" data-act="restock" data-id="${p.id}">Restock</button><button class="btn ghost small" data-act="count" data-id="${p.id}">Count</button>`}</div></td></tr>`}).join("")}
-    </tbody></table></div>`:'<div class="empty">Nothing here.</div>'}
+    </tbody></table></div>`:(q?`<div class="empty">No products match “${esc(S.stq.trim())}”.</div>`:'<div class="empty">Nothing here.</div>')}
   </section>
   ${recentRestocks()}`;
 }
@@ -1412,6 +1416,7 @@ document.addEventListener("input",e=>{
   if(t.id==="teamq"){S.teamQ=t.value;render();return}
   if(t.id==="oq"){S.oq=t.value;render();return}
   if(t.id==="pq"){S.pq=t.value;render();return}
+  if(t.id==="stq"){S.stq=t.value;render();return}
   if(t.dataset&&t.dataset.gsup){S.gsup[t.dataset.gsup]=t.value;const btn=t.closest(".panel").querySelector('[data-act="createOrder"]');if(btn)btn.textContent="Create order"+(t.value.trim()?" for "+t.value.trim():"");return}
   if(t.dataset&&(t.dataset.dq||t.dataset.dc)){const pid=t.dataset.dq||t.dataset.dc;if(S.draft[pid]){S.draft[pid][t.dataset.dq?"qty":"cost"]=t.value.replace(/[^0-9]/g,"");render()}return}
   if(t.dataset&&t.dataset.cnt){const had=(S.counts[t.dataset.cnt]??"")!=="";S.counts[t.dataset.cnt]=t.value.replace(/[^0-9]/g,"");if(had!==(S.counts[t.dataset.cnt]!=="")){const n=Object.values(S.counts).filter(v=>v!=="").length,btn=document.querySelector('[data-act="saveCounts"]');if(btn){btn.disabled=!n;btn.textContent="Save "+(n||"")+" count"+(n===1?"":"s")}}return}
