@@ -220,6 +220,32 @@ tr.click{cursor:pointer}tr.click:hover td{background:var(--surface2)}
 .pad button:active{background:var(--line)}.pad button:disabled{opacity:.4;cursor:not-allowed}
 .pad .ok{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-size:18px}
 body.locked{overflow:hidden}
+/* counter sessions: open → sell → close */
+.searchwrap input{font-size:20px;padding:16px 14px}
+.counter-start{justify-items:center;text-align:center;padding:36px 16px;gap:16px}
+.btn.huge{padding:20px 18px;font-size:20px;width:100%;max-width:420px;border-radius:12px}
+.warnb{background:var(--warn-bg);border-color:var(--warn);gap:10px}
+.bigempty{font-size:16px;padding:36px 8px}
+.counterbar{padding:12px 16px}
+.savebtn{padding:18px 16px;font-size:19px}
+.ticket .qty button{width:40px;height:40px;font-size:18px}
+.closeform{gap:0}
+.cstep{display:grid;gap:8px;padding:16px 0;border-top:1px solid var(--line)}
+.cstep:first-of-type{border-top:0}
+.cstep h3{font-size:15px;color:var(--ink);letter-spacing:.02em;text-transform:none;display:flex;align-items:center}
+.cstep h3 .n{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--ink);color:var(--bg);margin-right:10px;font-size:14px;flex:none}
+.cstep p{margin:0}
+.moneyin{font-size:20px!important;padding:12px!important;text-align:right}
+.credrow{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) auto;gap:8px;align-items:center}
+.credrow input[type=text]:not(.moneyin){font-size:17px;padding:12px}
+.credrow.col{grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr)}
+@media (max-width:560px){.credrow.col{grid-template-columns:1fr 1fr}.credrow.col>div{grid-column:1/-1}}
+.sumbox{display:grid;gap:6px;background:var(--surface2);border-radius:12px;padding:14px;margin:14px 0}
+.sumrow{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+.sumrow.big{font-size:18px;font-weight:700;border-top:2px solid var(--ink);padding-top:8px}
+.sumrow.big b{font-family:var(--display);font-size:26px}
+.sumrow.good{color:var(--good)}.sumrow.bad{color:var(--bad)}.sumrow.warn{color:var(--warn)}
+.bigtick{width:72px;height:72px;border-radius:50%;background:var(--good-bg);color:var(--good);display:grid;place-items:center;font-size:40px;font-weight:800}
 svg text{fill:var(--muted);font-size:11px;font-family:var(--body)}
 @media (prefers-reduced-motion:no-preference){.pbtn,.btn,.chip{transition:border-color .12s,background .12s}}
 </style>
@@ -234,6 +260,7 @@ svg text{fill:var(--muted);font-size:11px;font-family:var(--body)}
     <nav class="tabs" role="tablist" id="tabs">
       <button data-tab="sell" role="tab">Sell</button>
       <button data-tab="sales" role="tab">Sales</button>
+      <button data-tab="reports" role="tab">Reports</button>
       <button data-tab="stock" role="tab">Stock</button>
       <button data-tab="orders" role="tab">Orders</button>
       <button data-tab="expenses" role="tab">Expenses</button>

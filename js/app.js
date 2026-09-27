@@ -46,21 +46,23 @@ function periodRange(p){
 /* ---------- data: Supabase + offline queue ---------- */
 const CFG=window.CAVE_CONFIG||{};
 const COLS={
-  sales:{id:"id",date:"date",ts:"ts",items:"items",pay:"pay",status:"status",label:"label",customer:"customer",by:"by_name",byId:"by_id",device:"device",paidAt:"paid_at",paidVia:"paid_via",paidBy:"paid_by",voidedAt:"voided_at",voidedBy:"voided_by",voidReason:"void_reason",editedAt:"edited_at",editedBy:"edited_by"},
+  sales:{id:"id",date:"date",ts:"ts",items:"items",pay:"pay",status:"status",label:"label",customer:"customer",sessionId:"session_id",by:"by_name",byId:"by_id",device:"device",paidAt:"paid_at",paidVia:"paid_via",paidBy:"paid_by",voidedAt:"voided_at",voidedBy:"voided_by",voidReason:"void_reason",editedAt:"edited_at",editedBy:"edited_by"},
   expenses:{id:"id",date:"date",ts:"ts",cat:"cat",amount:"amount",note:"note",by:"by_name",byId:"by_id"},
   restocks:{id:"id",date:"date",ts:"ts",pid:"pid",name:"name",qty:"qty",unitCost:"unit_cost",supplier:"supplier",orderId:"order_id",orderNo:"order_no",by:"by_name"},
   products:{id:"id",name:"name",size:"size",cat:"cat",cost:"cost",price:"price",reorder:"reorder",open:"open",countedAt:"counted_at",needsCount:"needs_count",countSource:"count_source",supplier:"supplier",rank:"rank",active:"active"},
   orders:{id:"id",no:"no",createdAt:"created_ms",by:"by_name",byId:"by_id",supplier:"supplier",status:"status",expectedDate:"expected_date",sentAt:"sent_at",receivedAt:"received_at",cancelledAt:"cancelled_at",closedAt:"closed_at",closeNote:"close_note",items:"items",deliveries:"deliveries",note:"note"},
   staff:{id:"id",name:"name",role:"role",pinHash:"pin_hash",active:"active",createdAt:"created_at",createdBy:"created_by"},
-  settings:{key:"key",value:"value"}
+  settings:{key:"key",value:"value"},
+  counter_sessions:{id:"id",date:"date",status:"status",openedAt:"opened_at",openedBy:"opened_by",openedById:"opened_by_id",device:"device",closedAt:"closed_at",closedBy:"closed_by",closedById:"closed_by_id",totalSales:"total_sales",cash:"cash",paidOut:"paid_out",mobile:"mobile",creditTotal:"credit_total",collectedTotal:"collected_total",difference:"difference",note:"note",report:"report"},
+  credits:{id:"id",sessionId:"session_id",date:"date",name:"name",amount:"amount",paidAmount:"paid_amount",payments:"payments",paidAt:"paid_at",createdAt:"created_at",createdBy:"created_by",note:"note"}
 };
-const NUMC=new Set(["ts","amount","qty","unit_cost","cost","price","open","counted_at","reorder","rank","created_ms","sent_at","received_at","cancelled_at","closed_at","paid_at","voided_at","edited_at","created_at"]);
+const NUMC=new Set(["ts","amount","qty","unit_cost","cost","price","open","counted_at","reorder","rank","created_ms","sent_at","received_at","cancelled_at","closed_at","paid_at","voided_at","edited_at","created_at","opened_at","total_sales","cash","paid_out","credit_total","collected_total","difference","paid_amount"]);
 const REV={};for(const t in COLS){REV[t]={};for(const k in COLS[t])REV[t][COLS[t][k]]=k}
 const toRow=(t,o)=>{const r={};for(const k in o){const c=COLS[t][k];if(c)r[c]=o[k]===undefined?null:o[k]}return r};
 const fromRow=(t,r)=>{const o={};for(const c in r){const k=REV[t][c];if(k&&r[c]!==null&&r[c]!==undefined)o[k]=NUMC.has(c)&&typeof r[c]==="string"?Number(r[c]):r[c]}return o};
 const keyOf=t=>t==="settings"?"key":"id";
 const DAYT=["sales","expenses","restocks"];
-S.srv={sales:{},expenses:{},restocks:{},products:{},orders:{},staff:{},settings:{}};
+S.srv={sales:{},expenses:{},restocks:{},products:{},orders:{},staff:{},settings:{},counter_sessions:{},credits:{}};
 S.queue=[];try{S.queue=JSON.parse(ls("cave_queue")||"[]")||[]}catch(_){S.queue=[]}
 S.online=navigator.onLine;S.syncing=false;S.lastSync=0;S.failed=0;
 
@@ -87,7 +89,7 @@ function applyOp(rows,op){
 function rebuild(){
   const rows={};for(const t in S.srv)rows[t]={...S.srv[t]};
   for(const op of S.queue)applyOp(rows,op);
-  S.products=rows.products;S.orders=rows.orders;S.staffRows=rows.staff;S.settingsRows=rows.settings;
+  S.products=rows.products;S.orders=rows.orders;S.sessions=rows.counter_sessions;S.credits=rows.credits;S.staffRows=rows.staff;S.settingsRows=rows.settings;
   const days={};
   for(const t of DAYT)for(const x of Object.values(rows[t])){const d=x.date;if(!d)continue;(days[d]=days[d]||{date:d,_id:d,sales:[],expenses:[],restocks:[]})[t].push(x)}
   S.days=days;
@@ -149,6 +151,10 @@ async function loadAll(){
     let from=ymd(new Date(minCount-864e5));const floor=daysAgo(400),min=daysAgo(120);if(from>min)from=min;if(from<floor)from=floor;
     const [sales,expenses,restocks]=await Promise.all(DAYT.map(t=>fetchAll(t,q=>q.gte("date",from))));
     for(const [t,list] of [["sales",sales],["expenses",expenses],["restocks",restocks]]){srv[t]={};list.forEach(r=>{const o=fromRow(t,r);srv[t][o.id]=o})}
+    try{const [cs,cr]=await Promise.all([fetchAll("counter_sessions",q=>q.gte("date",daysAgo(400))),fetchAll("credits")]);
+      srv.counter_sessions={};cs.forEach(r=>{const o=fromRow("counter_sessions",r);srv.counter_sessions[o.id]=o});
+      srv.credits={};cr.forEach(r=>{const o=fromRow("credits",r);srv.credits[o.id]=o});S.sessErr=false}
+    catch(e){if(isNetErr(e))throw e;S.sessErr=true;srv.counter_sessions=srv.counter_sessions||{};srv.credits=srv.credits||{}}
     S.srv=srv;S.loadedFrom=from;S.online=true;S.lastSync=Date.now();S.status="ok";
     rebuild();onAccess();render();renderStatus();saveCache();flushSoon();
   }catch(e){if(isNetErr(e)){S.online=false;renderStatus()}else toast("Couldn't load: "+(e.message||e))}
@@ -235,139 +241,264 @@ function render(){
   const m=$("#main");
   if(S.status==="loading"){m.innerHTML='<div class="empty">Loading your ledger…</div>';return}
   if(!S.uid){m.innerHTML="";return}
-  m.innerHTML=({team:vTeam,sell:vSell,sales:vSales,stock:vStock,orders:vOrders,expenses:vExpenses,summary:vSummary,history:vHistory,products:vProducts}[S.tab]||vSell)();
+  m.innerHTML=({reports:vReports,team:vTeam,sell:vSell,sales:vSales,stock:vStock,orders:vOrders,expenses:vExpenses,summary:vSummary,history:vHistory,products:vProducts}[S.tab]||vSell)();
   if(keep){const el=document.getElementById(keep.id);if(el){el.focus();try{el.setSelectionRange(keep.s,keep.e)}catch(e){}}}
 }
 
-/* ---------- Sell: quick picks, tickets and open tabs ---------- */
+/* ---------- Sell: counter sessions (open counter → sell → close counter with a report) ---------- */
+const AT_CLOSE="At close"; // sales on a counter session: payment is counted at close, not per sale
 const isOpenSale=s=>!s.voidedAt&&(s.status==="open"||(s.pay==="Credit"&&!s.paidAt));
 const paidDay=s=>s.paidAt?ymd(new Date(s.paidAt)):s.date;
 const payLabel=s=>isOpenSale(s)?"Open":s.pay;
 const itemsText=s=>(s.items||[]).map(i=>i.qty+"× "+i.name).join(", ");
 const since=ts=>{const m=Math.round((Date.now()-ts)/6e4);if(m<1)return"just now";if(m<60)return m+" min";if(m<1440)return Math.floor(m/60)+" h "+(m%60)+" min";return Math.floor(m/1440)+" days"};
-function newTicket(){S.ticket={id:null,label:"",customer:"",items:[],dirty:false};S.tabMode=false}
+const whenTxt=ts=>ts?niceDate(ymd(new Date(ts)))+", "+time(ts):"—";
+const diffTxt=d=>Math.round(d||0)===0?"Matches":d<0?"Short "+money(-d):"Over "+money(d);
+const diffCls=d=>Math.round(d||0)===0?"ok":d<0?"out":"low";
+const OTHER_PAY=METHODS.filter(m=>m!=="Cash");
+function openSessions(){return Object.values(S.sessions||{}).filter(x=>x.status==="open").sort((a,b)=>a.openedAt-b.openedAt)}
+function curSession(){const o=openSessions();return o.length?o[o.length-1]:null}
+function lastClosed(){return Object.values(S.sessions||{}).filter(x=>x.status==="closed").sort((a,b)=>(b.closedAt||0)-(a.closedAt||0))[0]||null}
+function sessSales(id,withVoid){return collect("sales","0000-00-00","9999-99-99",withVoid).filter(s=>s.sessionId===id)}
+function sessTotal(id){return sessSales(id).reduce((a,s)=>a+saleTotal(s),0)}
+const creditLeft=c=>num(c.amount)-num(c.paidAmount);
+const openCredits=()=>Object.values(S.credits||{}).filter(c=>!c.paidAt&&creditLeft(c)>0).sort((a,b)=>a.createdAt-b.createdAt);
+function newTicket(){S.ticket={items:[]}}
 if(!S.ticket)newTicket();
 function ticketTotal(){return S.ticket.items.reduce((a,i)=>a+num(i.qty)*num(i.price),0)}
-function addToTicket(p){if(!p)return;const ex=S.ticket.items.find(i=>i.pid===p.id);if(ex)ex.qty++;else S.ticket.items.push({pid:p.id,name:p.name,size:p.size||"",qty:1,price:num(p.price),cost:num(p.cost)});S.ticket.dirty=true;S.flash=p.id}
+function addToTicket(p){if(!p)return;const ex=S.ticket.items.find(i=>i.pid===p.id);if(ex)ex.qty++;else S.ticket.items.push({pid:p.id,name:p.name,size:p.size||"",qty:1,price:num(p.price),cost:num(p.cost)});S.flash=p.id}
 function sellMatches(){
   const q=(S.q||"").trim().toLowerCase();if(!q)return[];
   const sm=stockMap(),words=q.split(/\s+/);
   return prodList().filter(p=>{const h=(p.name+" "+(p.size||"")+" "+p.cat).toLowerCase();return words.every(w=>h.includes(w))})
-    .sort((a,b)=>((sm[b.id]>0)-(sm[a.id]>0))||((a.rank||999)-(b.rank||999))||a.name.localeCompare(b.name)).slice(0,8);
+    .sort((a,b)=>((sm[b.id]>0)-(sm[a.id]>0))||((a.rank||999)-(b.rank||999))||a.name.localeCompare(b.name)).slice(0,10);
 }
 function prow(p,sm,first){const q=sm[p.id];return`<button class="prow${q<=0?" out":""}${first?" first":""}${S.flash===p.id?" flash":""}" data-act="add" data-id="${p.id}"><span class="pn"><b>${esc(p.name)}</b> <span class="muted small">${esc(p.size||"")}</span></span><span class="num pp">${money(p.price)}</span><span class="num ps${q<=0?" bad":q<=num(p.reorder)?" warn":""}">${q} left</span><span class="plus" aria-hidden="true">+</span></button>`}
 const FINE=window.matchMedia&&matchMedia("(pointer:fine)").matches; // mouse/keyboard counter vs phone
-function revealTicket(){const tk=document.querySelector(".ticket .total");if(!tk)return;const r=tk.getBoundingClientRect();if(r.bottom>innerHeight-8)tk.scrollIntoView({block:"end",behavior:"smooth"})}
+function revealTicket(){const tk=document.querySelector(".ticket .savebtn")||document.querySelector(".ticket .total");if(!tk)return;const r=tk.getBoundingClientRect();if(r.bottom>innerHeight-8)tk.scrollIntoView({block:"end",behavior:"smooth"})}
+
 function vSell(){
-  const sm=stockMap(),t=today(),matches=sellMatches(),T=S.ticket;
-  const quick=prodList().filter(p=>sm[p.id]>0).sort((a,b)=>(a.rank||999)-(b.rank||999)).slice(0,12);
-  const cats=CATS.filter(c=>prodList().some(p=>p.cat===c));
-  const catList=S.cat&&S.cat!=="All"?prodList().filter(p=>p.cat===S.cat).sort((a,b)=>((sm[b.id]>0)-(sm[a.id]>0))||(a.rank||999)-(b.rank||999)||a.name.localeCompare(b.name)):[];
-  const todays=collect("sales",t,t,true),live=todays.filter(s=>!s.voidedAt);
-  const openAll=collect("sales","0000-00-00","9999-99-99").filter(isOpenSale).sort((a,b)=>a.ts-b.ts);
-  const paidToday=collect("sales","0000-00-00","9999-99-99").filter(s=>!isOpenSale(s)&&paidDay(s)===t);
-  const voidedToday=todays.filter(s=>s.voidedAt);
-  const byM={};paidToday.forEach(s=>byM[s.pay]=(byM[s.pay]||0)+saleTotal(s));
-  const openTot=openAll.reduce((a,s)=>a+saleTotal(s),0),salesTot=live.reduce((a,s)=>a+saleTotal(s),0),paidTot=paidToday.reduce((a,s)=>a+saleTotal(s),0);
-  const view=S.sellView||"open";
-  const editing=!!T.id,tot=ticketTotal();
+  if(S.sessErr)return`<div class="banner">The counter needs a database update first. Ask the Admin to run <b>9-counter-sessions.sql</b> in Supabase.</div>`;
+  if(S.close){const x=(S.sessions||{})[S.close.id];if(x&&x.status==="open")return vClose(x);S.close=null}
+  if(S.justClosed){const x=(S.sessions||{})[S.justClosed];if(x)return vClosed(x);S.justClosed=null}
+  const cur=curSession();
+  if(!cur)return vOpenCounter();
+  const others=openSessions().filter(x=>x.id!==cur.id);
+  const sm=stockMap(),matches=sellMatches(),T=S.ticket,tot=ticketTotal();
+  const list=sessSales(cur.id,true),live=list.filter(s=>!s.voidedAt),sTot=live.reduce((a,s)=>a+saleTotal(s),0);
+  const old=Date.now()-cur.openedAt>12*36e5,nItems=T.items.reduce((a,i)=>a+num(i.qty),0);
   return `
-  ${S.readOnly?'<div class="banner">You can view this ledger but not record sales.</div>':""}
+  ${others.map(x=>`<div class="banner warnb row between"><span><b>${niceDate(x.date)}</b> was never closed · opened ${whenTxt(x.openedAt)} · ${money(sessTotal(x.id))}</span>${S.readOnly?"":`<button class="btn primary" data-act="startClose" data-id="${x.id}">Close ${niceDate(x.date)}</button>`}</div>`).join("")}
+  ${old?`<div class="banner warnb row between"><span>This counter was opened on <b>${whenTxt(cur.openedAt)}</b>. If today is a new day, close it first.</span>${S.readOnly?"":`<button class="btn primary" data-act="startClose" data-id="${cur.id}">Close ${niceDate(cur.date)}</button>`}</div>`:""}
+  <section class="panel counterbar">
+    <div class="row between">
+      <div><span class="pill ok">Counter open</span> <b class="tlabel">${niceDate(cur.date)}</b> <span class="muted small">since ${time(cur.openedAt)}${cur.openedBy?" · "+esc(cur.openedBy):""}</span></div>
+      <div class="row"><span><b class="num">${money(sTot)}</b> <span class="muted small">· ${live.length} sale${live.length===1?"":"s"}</span></span>${S.readOnly?"":`<button class="btn" data-act="startClose" data-id="${cur.id}">Close counter</button>`}</div>
+    </div>
+  </section>
   <div class="pos">
     <section class="panel addp">
-      <div class="searchwrap"><input type="search" id="q" placeholder="Type a drink… e.g. serengeti, jameson 750" value="${esc(S.q)}" autocomplete="off" aria-label="Search drinks"></div>
-      ${S.q&&matches.length?'<div class="muted small">Press <b>Enter</b> to add the highlighted drink, or tap any row.</div>':""}
-      ${S.q?`<div class="plist">${matches.length?matches.map((p,i)=>prow(p,sm,i===0)).join(""):'<div class="empty">No drink matches “'+esc(S.q)+'”.</div>'}</div>`:
-      `${S.cat&&S.cat!=="All"?`<div class="row between"><h3>${esc(S.cat)}</h3><button class="btn ghost small" data-act="cat" data-v="All">← Best sellers</button></div><div class="plist tall">${catList.map(p=>prow(p,sm)).join("")}</div>`:
-      `<div class="qstrip" aria-label="Best sellers">${quick.map(p=>{const inT=T.items.find(i=>i.pid===p.id);return`<button class="qpill${inT?" on":""}${S.flash===p.id?" flash":""}" data-act="add" data-id="${p.id}"><span class="qn">${esc(p.name)}${p.size?` <span class="muted">${esc(p.size)}</span>`:""}</span><span class="num qp">${Math.round(num(p.price)).toLocaleString("en-US")}</span>${inT?`<span class="qc num">${inT.qty}</span>`:""}</button>`}).join("")||'<div class="empty">Nothing in stock yet — do a stock count.</div>'}</div>
-      <div class="chips browse"><span class="muted small">Browse:</span>${cats.map(c=>`<button class="chip" data-act="cat" data-v="${esc(c)}">${esc(c)}</button>`).join("")}</div>`}`}
+      <div class="searchwrap"><input type="search" id="q" placeholder="Type a drink name…" value="${esc(S.q)}" autocomplete="off" aria-label="Search drinks"></div>
+      ${S.q?`<div class="plist">${matches.length?matches.map((p,i)=>prow(p,sm,i===0)).join(""):'<div class="empty">No drink matches “'+esc(S.q)+'”.</div>'}</div>`
+        :(()=>{const quick=prodList().filter(p=>sm[p.id]>0).sort((a,b)=>(a.rank||999)-(b.rank||999)).slice(0,12);
+          return quick.length?`<div class="qstrip" aria-label="Best sellers">${quick.map(p=>{const inT=T.items.find(i=>i.pid===p.id);return`<button class="qpill${inT?" on":""}${S.flash===p.id?" flash":""}" data-act="add" data-id="${p.id}"><span class="qn">${esc(p.name)}${p.size?` <span class="muted">${esc(p.size)}</span>`:""}</span><span class="num qp">${Math.round(num(p.price)).toLocaleString("en-US")}</span>${inT?`<span class="qc num">${inT.qty}</span>`:""}</button>`}).join("")}</div>
+          <div class="muted small">Not here? Type the drink's name above.</div>`:`<div class="empty bigempty">Type the first letters of the drink, then tap it to add it to the sale.</div>`})()}
     </section>
-
     <section class="panel ticket">
-      <div class="row between"><div>${editing?`<span class="pill low">Open tab</span> <b class="tlabel">${esc(T.label)}</b>`:`<h3>New sale${T.items.length?` <span class="pill n num">${T.items.reduce((a,i)=>a+num(i.qty),0)} item${T.items.reduce((a,i)=>a+num(i.qty),0)===1?"":"s"}</span>`:""}</h3>`}</div>
-        ${T.items.length||editing?`<button class="btn ghost small" data-act="clearTicket">${editing?"Close without saving":"Clear"}</button>`:""}</div>
+      <div class="row between"><h3>New sale${nItems?` <span class="pill n num">${nItems} item${nItems===1?"":"s"}</span>`:""}</h3>${T.items.length?`<button class="btn ghost small" data-act="clearTicket">Clear</button>`:""}</div>
       <div class="tlines">${T.items.length?T.items.map((i,ix)=>`<div class="tline${S.flash===i.pid?" flash":""}">
           <div class="tn"><b>${esc(i.name)}</b> <span class="muted small">${esc(i.size||"")}</span>
             <div class="muted small">@ <input class="pin num" type="text" inputmode="numeric" id="pr${ix}" data-act="price" data-ix="${ix}" value="${i.price}" aria-label="Price each"></div></div>
           <div class="qty"><button data-act="qty" data-ix="${ix}" data-d="-1" aria-label="One less">−</button><span class="num">${i.qty}</span><button data-act="qty" data-ix="${ix}" data-d="1" aria-label="One more">+</button></div>
-          <div class="num lt">${money(i.qty*i.price)}</div></div>`).join(""):`<div class="empty">${editing?"This tab is empty — add drinks or void it.":"Tap a drink or type its name."}</div>`}</div>
+          <div class="num lt">${money(i.qty*i.price)}</div></div>`).join(""):`<div class="empty">Nothing yet. Search for a drink to add it.</div>`}</div>
       <div class="total"><span>Total</span><span class="num">${money(tot)}</span></div>
-      ${S.readOnly?"":`
-      ${editing?`<button class="btn big" data-act="saveTab" ${T.dirty&&T.items.length?"":"disabled"}>Save tab</button>`:""}
-      <div class="small muted" style="font-weight:700;letter-spacing:.06em;text-transform:uppercase">${editing?"Take payment":"Paid now with"}</div>
-      <div class="paygrid">${METHODS.map((m,ix)=>`<button class="btn paybtn${ix===0?" primary":""}" data-act="payNow" data-v="${esc(m)}" ${T.items.length?"":"disabled"}>${esc(m)}</button>`).join("")}</div>
-      ${editing?"":S.tabMode?`<div class="tabform"><label class="f">Tab name — table or customer<input type="text" id="tabname" value="${esc(T.label)}" placeholder="e.g. Table 3, Juma, VIP" autocomplete="off"></label>
-          <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="tabMode" data-v="0">Cancel</button><button class="btn primary" data-act="openTab" ${T.items.length?"":"disabled"}>Open tab</button></div></div>`
-        :`<button class="btn big ghostline" data-act="tabMode" data-v="1" ${T.items.length?"":"disabled"}>Not paid yet — keep open as a tab</button>`}`}
+      ${S.readOnly?"":`<button class="btn primary big savebtn" data-act="saveSale" ${T.items.length?"":"disabled"}>Save sale</button>`}
     </section>
   </div>
-
   <section class="panel">
-    <div class="daystrip">
-      <div><span class="l">Sales today</span><b class="num">${money(salesTot)}</b><span class="muted small">${live.length} sales · by ${esc(S.name)}${S.role==="admin"?" & team":""}</span></div>
-      <div><span class="l">Paid in today</span><b class="num">${money(paidTot)}</b><span class="muted small">${Object.entries(byM).sort((a,b)=>b[1]-a[1]).map(([k,v])=>esc(k)+" "+short(v)).join(" · ")||"—"}</span></div>
-      <div${openAll.length?' class="warnbox"':""}><span class="l">Open tabs</span><b class="num">${money(openTot)}</b><span class="muted small">${openAll.length} not paid yet</span></div>
-    </div>
-    <div class="seg3" role="tablist">${[["open","Open tabs",openAll.length],["paid","Paid today",paidToday.length],["void","Voided",voidedToday.length]].map(([k,l,n])=>`<button role="tab" aria-selected="${view===k}" data-act="sellView" data-v="${k}">${l} <span class="cnt">${n}</span></button>`).join("")}</div>
-    ${view==="open"?(openAll.length?`<div class="tabs">${openAll.map(s=>{const old=s.date<t;return`<div class="tabcard${T.id===s.id?" sel":""}${old?" old":""}">
-        <div class="row between"><b>${esc(s.label||s.customer||"Tab")}</b><b class="num">${money(saleTotal(s))}</b></div>
-        <div class="small">${esc(itemsText(s))}</div>
-        <div class="muted small">${old?"Since "+niceDate(s.date):"Open "+since(s.ts)} · ${esc(s.by||"—")}</div>
-        ${S.readOnly?"":`<div class="row"><button class="btn small" data-act="editTab" data-id="${s.id}">Add / change</button><button class="btn small primary" data-act="payTab" data-id="${s.id}">Take payment</button>${canVoid(s)?`<button class="btn ghost small" data-act="voidSale" data-id="${s.id}" data-doc="${s._doc}">Void</button>`:""}</div>`}
-      </div>`}).join("")}</div>`:'<div class="empty">No open tabs. Use “keep open as a tab” for tables and customers who pay later.</div>')
-    :view==="paid"?(paidToday.length?`<div class="tbl"><table><thead><tr><th>Time</th><th>Drinks</th><th>Paid with</th><th>By</th><th class="r">Total</th><th></th></tr></thead><tbody>
-      ${paidToday.sort((a,b)=>(b.paidAt||b.ts)-(a.paidAt||a.ts)).map(s=>`<tr><td class="num">${time(s.paidAt||s.ts)}</td><td>${esc(itemsText(s))}${s.label?`<div class="muted small">Tab: ${esc(s.label)}${s.date<t?" · from "+niceDate(s.date):""}</div>`:""}</td>
-        <td>${S.readOnly?esc(s.pay):`<select class="paysel" data-paysel="${s.id}" aria-label="Change payment">${opt(METHODS.includes(s.pay)?METHODS:[s.pay,...METHODS],s.pay)}</select>`}</td>
-        <td class="muted">${esc(s.by||"—")}</td><td class="r num">${money(saleTotal(s))}</td>
-        <td class="r" style="white-space:nowrap">${S.readOnly?"":`<button class="btn ghost small" data-act="reopen" data-id="${s.id}" title="Mark as not paid">Reopen</button>${canVoid(s)?`<button class="btn ghost small" data-act="voidSale" data-id="${s.id}" data-doc="${s._doc}">Void</button>`:""}`}</td></tr>`).join("")}
-      </tbody></table></div><p class="muted small" style="margin:0">Picked the wrong payment? Change it in the list — it updates the day's totals straight away.</p>`:'<div class="empty">Nothing paid yet today.</div>')
-    :(voidedToday.length?`<div class="tbl"><table><tbody>${voidedToday.map(s=>`<tr class="voided"><td class="num">${time(s.ts)}</td><td>${esc(itemsText(s))}<div class="small" style="color:var(--bad)">Voided${s.voidedBy?" by "+esc(s.voidedBy):""}${s.voidReason?" — "+esc(s.voidReason):""}</div></td><td class="r num"><s>${money(saleTotal(s))}</s></td></tr>`).join("")}</tbody></table></div>`:'<div class="empty">No voided sales today.</div>')}
+    <div class="row between"><h3>Sales on this counter · ${niceDate(cur.date)}</h3><b class="num">${money(sTot)}</b></div>
+    ${list.length?`<div class="tbl"><table><tbody>${list.map(s=>{const v=!!s.voidedAt;return`<tr${v?' class="voided"':""}><td class="num" style="width:56px">${time(s.ts)}</td><td>${esc(itemsText(s))}${v?`<div class="small" style="color:var(--bad)">Voided${s.voidReason?" — "+esc(s.voidReason):""}</div>`:""}</td><td class="muted small">${esc(s.by||"")}</td><td class="r num">${v?`<s>${money(saleTotal(s))}</s>`:money(saleTotal(s))}</td><td class="r">${!v&&canVoid(s)?`<button class="btn ghost small" data-act="voidSale" data-id="${s.id}" data-doc="${s._doc}">Void</button>`:""}</td></tr>`}).join("")}</tbody></table></div>
+    <p class="muted small" style="margin:0">Made a mistake? Tap <b>Void</b> within 10 minutes. After that, ask the Admin.</p>`:'<div class="empty">No sales yet on this counter.</div>'}
   </section>`;
 }
-function payTabForm(s){
-  openModal(`<div style="display:grid;gap:12px"><h2>Take payment · ${esc(s.label||"Tab")}</h2>
-    <div class="muted small">${esc(itemsText(s))}</div>
-    <div class="total"><span>To pay</span><span class="num">${money(saleTotal(s))}</span></div>
-    <div class="paygrid">${METHODS.map((m,ix)=>`<button class="btn paybtn${ix===0?" primary":""}" data-act="closeTab" data-id="${s.id}" data-v="${esc(m)}">${esc(m)}</button>`).join("")}</div>
-    <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="close">Not now</button></div></div>`);
+function vOpenCounter(){
+  const last=lastClosed();
+  return `<section class="panel counter-start">
+    <h2>The counter is closed</h2>
+    <p class="muted" style="margin:0">Open the counter to start recording sales.</p>
+    ${S.readOnly?"":`<button class="btn primary huge" data-act="openCounter">Open counter</button>`}
+    ${last?`<div class="muted small">Last closed: <b>${niceDate(last.date)}</b> · ${money(last.totalSales)} · ${whenTxt(last.closedAt)}${last.closedBy?" by "+esc(last.closedBy):""}</div><button class="btn" data-act="pdfReport" data-id="${last.id}">Download that report (PDF)</button>`:""}
+  </section>`;
 }
+function openCounter(){
+  if(curSession()){render();return}
+  const ts=Date.now(),x={id:"cs"+uid(),date:today(),status:"open",openedAt:ts,openedBy:S.name||"",openedById:S.uid||"",device:DEV};
+  enqueue({k:"ins",t:"counter_sessions",row:toRow("counter_sessions",x)});
+  S.justClosed=null;newTicket();toast("Counter open · "+niceDate(x.date));
+  setTimeout(()=>{const q=$("#q");q&&q.focus()},0);
+}
+
+/* ---------- Close counter ---------- */
+function startClose(id){
+  const x=(S.sessions||{})[id];if(!x)return;
+  const exp=collect("expenses",x.date,x.date).filter(e=>!["Rent","Wages"].includes(e.cat)).reduce((a,e)=>a+num(e.amount),0);
+  S.close={id,cash:"",paidOut:exp?String(exp):"",mobile:{},credits:[{id:"cr"+uid(),name:"",amount:""}],collected:{},note:"",expHint:exp};
+  S.q="";S.confirm=null;S.tab="sell";ls("cave_tab","sell");window.scrollTo(0,0);
+}
+function closeCalc(x){
+  const C=S.close,total=sessTotal(x.id);
+  const mob=OTHER_PAY.reduce((a,m)=>a+num(C.mobile[m]),0);
+  const cred=C.credits.reduce((a,c)=>a+(c.name.trim()?num(c.amount):0),0);
+  const col=Object.entries(C.collected).reduce((a,[id,c])=>{const cr=(S.credits||{})[id];return a+Math.min(num(c.amount),cr?creditLeft(cr):num(c.amount))},0);
+  const acc=num(C.cash)+num(C.paidOut)+mob+cred-col;
+  return{total,mob,cred,col,acc,diff:acc-total};
+}
+const mIn=(id,val,key,ph)=>`<input type="text" inputmode="numeric" class="moneyin num" id="${id}" data-cl="${key}" value="${esc(val)}" placeholder="${ph||""}" autocomplete="off">`;
+function closeSumHtml(x){
+  const k=closeCalc(x),d=Math.round(k.diff);
+  return `<div class="sumrow"><span>Total sales on this counter</span><b class="num">${money(k.total)}</b></div>
+    <div class="sumrow"><span>Money you have accounted for</span><b class="num">${money(k.acc)}</b></div>
+    <div class="sumrow big ${d===0?"good":d<0?"bad":"warn"}"><span>${d===0?"Everything matches ✓":d<0?"Short by":"Over by"}</span><b class="num">${d===0?"":money(Math.abs(d))}</b></div>`;
+}
+function closeBtnHtml(x){
+  const d=Math.round(closeCalc(x).diff),armed=S.confirm==="close"+x.id;
+  return `<button class="btn primary big" data-act="doClose" id="closeBtn"${armed?' style="background:var(--bad);border-color:var(--bad)"':""}>${armed?(d<0?"Short by "+money(-d):"Over by "+money(d))+" — tap again to close anyway":"Close "+niceDate(x.date)+" & make report"}</button>`;
+}
+function vClose(x){
+  const C=S.close,sales=sessSales(x.id),oc=openCredits();
+  return `<div class="row between"><h2>Close counter · ${niceDate(x.date)}</h2><button class="btn" data-act="cancelClose">Back</button></div>
+  <section class="panel closeform">
+    <div class="muted small">Opened ${whenTxt(x.openedAt)}${x.openedBy?" by "+esc(x.openedBy):""} · ${sales.length} sale${sales.length===1?"":"s"} · ${bottles(sales)} bottles</div>
+    <div class="cstep"><h3><span class="n">1</span>Cash in the drawer</h3><p class="muted small">Count all the notes and coins.</p>${mIn("cl_cash",C.cash,"cash","Type the cash counted")}</div>
+    <div class="cstep"><h3><span class="n">2</span>Mobile money and card</h3><p class="muted small">Check each phone or statement for this counter's total. Leave empty if none.</p>
+      <div class="grid2">${OTHER_PAY.map((m,ix)=>`<label class="f">${esc(m)}${mIn("cl_m"+ix,C.mobile[m]??"","m:"+m)}</label>`).join("")}</div></div>
+    <div class="cstep"><h3><span class="n">3</span>Credit (deni) — who didn't pay</h3><p class="muted small">One line per person. Leave empty if everyone paid.</p>
+      ${C.credits.map((c,i)=>`<div class="credrow"><input type="text" id="cl_cn${i}" data-cl="cn:${i}" value="${esc(c.name)}" placeholder="Name" autocomplete="off">${mIn("cl_ca"+i,c.amount,"ca:"+i,"Amount")}${C.credits.length>1?`<button class="btn ghost small" data-act="clDelCredit" data-ix="${i}" aria-label="Remove line">✕</button>`:""}</div>`).join("")}
+      <div><button class="btn small" data-act="clAddCredit">+ Add another person</button></div></div>
+    ${oc.length?`<div class="cstep"><h3><span class="n">4</span>Old credit paid back on this counter</h3><p class="muted small">Only fill in people who paid. This money is in the cash or mobile totals above, so it's taken off.</p>
+      ${oc.map(c=>{const v=C.collected[c.id]||{};return`<div class="credrow col"><div><b>${esc(c.name)}</b><div class="muted small">Owes ${money(creditLeft(c))} · since ${niceDate(c.date)}</div></div>${mIn("cl_ka_"+c.id,v.amount??"","ka:"+c.id,"Paid")}<select id="cl_kv_${c.id}" data-clv="${c.id}" aria-label="Paid with">${opt(METHODS,v.via||"Cash")}</select></div>`}).join("")}</div>`:""}
+    <div class="cstep"><h3><span class="n">${oc.length?5:4}</span>Taken from the drawer for expenses (matumizi)</h3><p class="muted small">${C.expHint?"Expenses recorded for "+niceDate(x.date)+": "+money(C.expHint)+". Change it if some weren't paid from the drawer.":"Money paid out of the drawer, e.g. ice, transport. Record each one in Expenses too."}</p>${mIn("cl_out",C.paidOut,"out")}</div>
+    <div class="cstep"><label class="f">Note (optional)<input type="text" id="cl_note" data-cl="note" value="${esc(C.note)}" placeholder="e.g. power cut from 21:00" autocomplete="off"></label></div>
+    <div class="sumbox" id="closeSum">${closeSumHtml(x)}</div>
+    <div id="closeBtnWrap">${S.readOnly?"":closeBtnHtml(x)}</div>
+  </section>`;
+}
+function updateCloseSum(){const x=S.close&&(S.sessions||{})[S.close.id];if(!x)return;const a=$("#closeSum");if(a)a.innerHTML=closeSumHtml(x);const b=$("#closeBtnWrap");if(b&&!S.readOnly){if(S.confirm==="close"+x.id)S.confirm=null;b.innerHTML=closeBtnHtml(x)}}
+function closeInput(t){
+  const C=S.close;if(!C)return;const k=t.dataset.cl,v=t.value;
+  const clean=s=>s.replace(/[^0-9.,]/g,"");
+  if(k==="cash")C.cash=clean(v);else if(k==="out")C.paidOut=clean(v);else if(k==="note")C.note=v;
+  else if(k.startsWith("m:"))C.mobile[k.slice(2)]=clean(v);
+  else if(k.startsWith("cn:"))C.credits[+k.slice(3)].name=v;
+  else if(k.startsWith("ca:"))C.credits[+k.slice(3)].amount=clean(v);
+  else if(k.startsWith("ka:")){const id=k.slice(3);C.collected[id]={...(C.collected[id]||{via:"Cash"}),amount:clean(v)}}
+  updateCloseSum();
+}
+function doClose(){
+  const C=S.close,x=C&&(S.sessions||{})[C.id];if(!x)return;
+  if(String(C.cash).trim()===""){toast("Type the cash in the drawer first (0 if there is none)");const c=$("#cl_cash");c&&c.focus();return}
+  if(C.credits.some(c=>(c.name.trim()&&!num(c.amount))||(!c.name.trim()&&num(c.amount)))){toast("Each credit line needs a name and an amount");return}
+  const k=closeCalc(x);
+  if(Math.round(k.diff)!==0&&S.confirm!=="close"+x.id){S.confirm="close"+x.id;const b=$("#closeBtnWrap");if(b)b.innerHTML=closeBtnHtml(x);return}
+  S.confirm=null;
+  const ts=Date.now(),live=sessSales(x.id),voided=sessSales(x.id,true).filter(s=>s.voidedAt);
+  const lines={};live.forEach(s=>(s.items||[]).forEach(i=>{const l=lines[i.pid]=lines[i.pid]||{name:i.name,size:i.size||"",qty:0,amount:0};l.qty+=num(i.qty);l.amount+=num(i.qty)*num(i.price)}));
+  const credits=C.credits.filter(c=>c.name.trim()&&num(c.amount)>0).map(c=>({id:c.id,name:c.name.trim(),amount:num(c.amount)}));
+  const collected=Object.entries(C.collected).map(([id,v])=>{const cr=(S.credits||{})[id];const amt=Math.min(num(v.amount),cr?creditLeft(cr):0);return{credit_id:id,name:cr?cr.name:"",from:cr?cr.date:"",amount:amt,via:v.via||"Cash"}}).filter(c=>c.amount>0);
+  const mobile={};OTHER_PAY.forEach(m=>mobile[m]=num(C.mobile[m]));
+  const sellers={};live.forEach(s=>{const n=s.by||"—";sellers[n]=(sellers[n]||0)+saleTotal(s)});
+  const report={v:1,date:x.date,openedAt:x.openedAt,openedBy:x.openedBy||"",closedAt:ts,closedBy:S.name||"",count:live.length,bottles:bottles(live),
+    total:k.total,cash:num(C.cash),paidOut:num(C.paidOut),mobile,credits:credits.map(({name,amount})=>({name,amount})),collected,
+    creditTotal:k.cred,collectedTotal:k.col,accounted:k.acc,diff:k.diff,
+    lines:Object.values(lines).sort((a,b)=>b.amount-a.amount),voided:voided.length,voidedTotal:voided.reduce((a,s)=>a+saleTotal(s),0),sellers,note:C.note.trim()};
+  const p={closed_at:ts,closed_by:S.name||"",closed_by_id:S.uid||"",cash:report.cash,paid_out:report.paidOut,mobile,note:report.note,report,credits,collected:collected.map(c=>({credit_id:c.credit_id,amount:c.amount,via:c.via}))};
+  const local=[{k:"upd",t:"counter_sessions",id:x.id,patch:{status:"closed",closed_at:ts,closed_by:S.name||"",closed_by_id:S.uid||"",total_sales:k.total,cash:report.cash,paid_out:report.paidOut,mobile,credit_total:k.cred,collected_total:k.col,difference:k.diff,note:report.note||null,report}}];
+  credits.forEach(c=>local.push({k:"ins",t:"credits",row:{id:c.id,session_id:x.id,date:x.date,name:c.name,amount:c.amount,paid_amount:0,payments:[],created_at:ts,created_by:S.name||""}}));
+  collected.forEach(c=>{const cr=S.credits[c.credit_id];if(!cr)return;const pa=num(cr.paidAmount)+c.amount;local.push({k:"upd",t:"credits",id:c.credit_id,patch:{paid_amount:pa,payments:[...(cr.payments||[]),{session_id:x.id,amount:c.amount,via:c.via,ts,by:S.name||""}],paid_at:pa>=num(cr.amount)?ts:null}})});
+  enqueue({k:"rpc",fn:"close_session",args:{p_id:x.id,p},local});
+  S.close=null;S.justClosed=x.id;render();window.scrollTo(0,0);toast(niceDate(x.date)+" closed · report saved");
+}
+function vClosed(x){
+  const r=x.report||{},cur=curSession();
+  return `<section class="panel counter-start">
+    <div class="bigtick" aria-hidden="true">✓</div>
+    <h2>${niceDate(x.date)} is closed</h2>
+    <div class="sumbox" style="width:100%;max-width:420px;text-align:left">
+      <div class="sumrow"><span>Total sales</span><b class="num">${money(r.total??x.totalSales)}</b></div>
+      <div class="sumrow"><span>Cash</span><b class="num">${money(r.cash)}</b></div>
+      <div class="sumrow"><span>Mobile money & card</span><b class="num">${money(Object.values(r.mobile||{}).reduce((a,v)=>a+num(v),0))}</b></div>
+      <div class="sumrow"><span>Credit (deni)</span><b class="num">${money(r.creditTotal)}</b></div>
+      <div class="sumrow big ${Math.round(r.diff||0)===0?"good":r.diff<0?"bad":"warn"}"><span>${diffTxt(r.diff)}</span><b></b></div>
+    </div>
+    <button class="btn huge" data-act="pdfReport" data-id="${x.id}">Download report (PDF)</button>
+    ${cur?`<button class="btn primary big" data-act="doneClosed">Back to the counter</button>`:`<button class="btn primary huge" data-act="openCounter">Open counter for a new day</button><button class="btn ghost" data-act="doneClosed">Not now</button>`}
+    <p class="muted small" style="margin:0">The report is also saved for the Admin.</p>
+  </section>`;
+}
+
+/* ---------- report PDF (A4) ---------- */
+function pdfReport(x){
+  if(!window.jspdf){toast("PDF tool is still loading — try again in a moment");return}
+  const r=x.report;if(!r){toast("This counter has no report yet");return}
+  const {jsPDF}=window.jspdf,doc=new jsPDF({unit:"mm",format:"a4"}),W=210,L=16,R=W-16,mny=n=>Math.round(n||0).toLocaleString("en-US");
+  let y=18;
+  const need=h=>{if(y+h>280){doc.addPage();y=20}};
+  doc.setFont("helvetica","bold");doc.setFontSize(18);doc.text("THE CAVE LIQUOR HOUSE",L,y);
+  doc.setFont("helvetica","normal");doc.setFontSize(10);doc.text("Sinza, Dar es Salaam",L,y+6);
+  doc.setFont("helvetica","bold");doc.setFontSize(13);doc.text("DAILY SALES REPORT",R,y,{align:"right"});
+  doc.setFont("helvetica","normal");doc.setFontSize(11);doc.text(niceDate(r.date)+" "+r.date.slice(0,4),R,y+6,{align:"right"});
+  y+=14;doc.setDrawColor(40);doc.setLineWidth(.5);doc.line(L,y,R,y);y+=7;
+  const meta=[["Opened",whenTxt(r.openedAt)+(r.openedBy?" · "+r.openedBy:"")],["Closed",whenTxt(r.closedAt)+(r.closedBy?" · "+r.closedBy:"")],["Sales",r.count+" sales · "+r.bottles+" bottles"],["Voided",r.voided?r.voided+" (TSh "+mny(r.voidedTotal)+")":"None"]];
+  doc.setFontSize(10);meta.forEach(([k,v],ix)=>{const xx=ix%2?W/2+4:L,yy=y+Math.floor(ix/2)*6;doc.setFont("helvetica","bold");doc.text(k+":",xx,yy);doc.setFont("helvetica","normal");doc.text(String(v),xx+18,yy)});
+  y+=16;
+  const section=t=>{need(16);doc.setFillColor(235,230,222);doc.rect(L,y-5,R-L,8,"F");doc.setFont("helvetica","bold");doc.setFontSize(10);doc.text(t,L+2,y);y+=8;doc.setFont("helvetica","normal")};
+  const row=(a,b,bold,indent)=>{need(7);doc.setFont("helvetica",bold?"bold":"normal");doc.setFontSize(10);doc.text(a,L+2+(indent||0),y);doc.text(b,R-2,y,{align:"right"});doc.setDrawColor(215);doc.setLineWidth(.2);doc.line(L,y+2.3,R,y+2.3);y+=7};
+  section("MONEY");
+  row("Total sales","TSh "+mny(r.total),true);
+  row("Cash in the drawer","TSh "+mny(r.cash));
+  if(r.paidOut)row("Taken from the drawer for expenses","TSh "+mny(r.paidOut));
+  OTHER_PAY.forEach(m=>{if(num((r.mobile||{})[m]))row(m,"TSh "+mny(r.mobile[m]))});
+  row("Credit (deni) given","TSh "+mny(r.creditTotal));
+  if(r.collectedTotal)row("Less: old credit paid back","− TSh "+mny(r.collectedTotal));
+  row("Money accounted for","TSh "+mny(r.accounted),true);
+  row("Difference",Math.round(r.diff||0)===0?"Matches":(r.diff<0?"SHORT TSh ":"OVER TSh ")+mny(Math.abs(r.diff)),true);
+  y+=3;
+  if((r.credits||[]).length){section("CREDIT GIVEN (WHO DIDN'T PAY)");r.credits.forEach(c=>row(c.name,"TSh "+mny(c.amount)));y+=3}
+  if((r.collected||[]).length){section("OLD CREDIT PAID BACK");r.collected.forEach(c=>row(c.name+(c.from?"  (from "+niceDate(c.from)+")":"")+" · "+c.via,"TSh "+mny(c.amount)));y+=3}
+  const sel=Object.entries(r.sellers||{});if(sel.length>1){section("BY SELLER");sel.forEach(([n,v])=>row(n,"TSh "+mny(v)));y+=3}
+  section("ITEMS SOLD");
+  need(7);doc.setFont("helvetica","bold");doc.setFontSize(9);doc.text("Item",L+2,y);doc.text("Qty",150,y,{align:"right"});doc.text("Amount (TSh)",R-2,y,{align:"right"});y+=6;
+  doc.setFont("helvetica","normal");doc.setFontSize(10);
+  (r.lines||[]).forEach(l=>{need(6.5);doc.text((l.name+(l.size?" "+l.size:"")).slice(0,70),L+2,y);doc.text(String(l.qty),150,y,{align:"right"});doc.text(mny(l.amount),R-2,y,{align:"right"});doc.setDrawColor(225);doc.setLineWidth(.15);doc.line(L,y+2,R,y+2);y+=6.5});
+  if(!(r.lines||[]).length)row("No sales","");
+  if(r.note){y+=3;need(10);doc.setFont("helvetica","bold");doc.text("Note:",L,y);doc.setFont("helvetica","normal");doc.text(doc.splitTextToSize(r.note,R-L-16),L+14,y);y+=8}
+  need(26);y=Math.max(y+14,y);doc.setDrawColor(60);doc.setLineWidth(.3);
+  doc.line(L,y,L+70,y);doc.line(R-70,y,R,y);doc.setFontSize(9);doc.text("Seller: "+(r.closedBy||""),L,y+5);doc.text("Checked by",R-70,y+5);
+  doc.save("The Cave report "+r.date+".pdf");
+}
+
 function sellAct(a,b){
-  const T=S.ticket,P=S.products[b.dataset.id],t=today();
-  const findSale=id=>collect("sales","0000-00-00","9999-99-99",true).find(x=>x.id===id);
+  const T=S.ticket,P=S.products[b.dataset.id];
   switch(a){
-    case"add":if(P){const fromSearch=!!S.q;addToTicket(P);S.q="";render();
+    case"add":if(P){addToTicket(P);S.q="";render();
       if(!FINE)revealTicket();
-      setTimeout(()=>{S.flash=null;if(FINE||fromSearch){const q=$("#q");q&&q.focus({preventScroll:!FINE})}},250)}return true;
-    case"cat":S.cat=b.dataset.v;render();return true;
-    case"qty":{const i=T.items[+b.dataset.ix];if(!i)return true;i.qty+=+b.dataset.d;if(i.qty<=0)T.items.splice(+b.dataset.ix,1);T.dirty=true;render();return true}
+      setTimeout(()=>{S.flash=null;if(FINE){const q=$("#q");q&&q.focus({preventScroll:true})}},250)}return true;
+    case"qty":{const i=T.items[+b.dataset.ix];if(!i)return true;i.qty+=+b.dataset.d;if(i.qty<=0)T.items.splice(+b.dataset.ix,1);render();return true}
     case"clearTicket":newTicket();render();return true;
-    case"tabMode":S.tabMode=b.dataset.v==="1";render();if(S.tabMode)setTimeout(()=>{const x=$("#tabname");x&&x.focus()},0);return true;
-    case"sellView":S.sellView=b.dataset.v;render();return true;
-    case"payNow":{
-      if(!T.items.length)return true;const m=b.dataset.v,ts=Date.now(),tot=ticketTotal();
-      if(T.id){ // existing tab: save changes, then close
-        if(T.dirty)enqueue({k:"rpc",fn:"update_open_sale",args:{p_id:T.id,p_items:T.items,p_label:T.label,p_customer:T.customer||"",p_by:S.name},local:[{k:"upd",t:"sales",id:T.id,patch:{items:T.items,label:T.label}}]});
-        enqueue({k:"rpc",fn:"close_sale",args:{p_id:T.id,p_pay:m,p_by:S.name},local:[{k:"upd",t:"sales",id:T.id,patch:{status:"paid",pay:m,paid_at:ts,paid_via:m,paid_by:S.name}}]});
-        toast(T.label+" paid · "+money(tot)+" by "+m);
-      }else{
-        const sale={id:uid(),date:t,ts,items:T.items.map(i=>({...i})),pay:m,status:"paid",paidAt:ts,by:S.name||"",byId:S.uid||""};
-        enqueue({k:"ins",t:"sales",row:toRow("sales",sale)});toast("Sale recorded · "+money(tot)+" · "+m);
-      }
-      newTicket();render();setTimeout(()=>{const q=$("#q");q&&q.focus()},0);return true}
-    case"openTab":{
-      const label=(($("#tabname")||{}).value||T.label||"").trim();if(!label){toast("Give the tab a name — a table number or the customer");const x=$("#tabname");x&&x.focus();return true}
-      const sale={id:uid(),date:t,ts:Date.now(),items:T.items.map(i=>({...i})),pay:"Open",status:"open",label,by:S.name||"",byId:S.uid||""};
-      enqueue({k:"ins",t:"sales",row:toRow("sales",sale)});toast("Tab “"+label+"” opened · "+money(ticketTotal()));S.sellView="open";newTicket();render();return true}
-    case"editTab":{const s=findSale(b.dataset.id);if(!s)return true;S.ticket={id:s.id,label:s.label||s.customer||"Tab",customer:s.customer||"",items:s.items.map(i=>({...i})),dirty:false};S.tabMode=false;render();window.scrollTo({top:0,behavior:"smooth"});return true}
-    case"saveTab":{if(!T.id||!T.items.length)return true;enqueue({k:"rpc",fn:"update_open_sale",args:{p_id:T.id,p_items:T.items,p_label:T.label,p_customer:T.customer||"",p_by:S.name},local:[{k:"upd",t:"sales",id:T.id,patch:{items:T.items,label:T.label,edited_at:Date.now(),edited_by:S.name}}]});toast("Tab “"+T.label+"” saved · "+money(ticketTotal()));newTicket();render();return true}
-    case"payTab":{const s=findSale(b.dataset.id);if(s)payTabForm(s);return true}
-    case"closeTab":{const s=findSale(b.dataset.id),m=b.dataset.v,ts=Date.now();if(!s)return true;
-      enqueue({k:"rpc",fn:"close_sale",args:{p_id:s.id,p_pay:m,p_by:S.name},local:[{k:"upd",t:"sales",id:s.id,patch:{status:"paid",pay:m,paid_at:ts,paid_via:m,paid_by:S.name}}]});
-      if(S.ticket.id===s.id)newTicket();closeModal();toast((s.label||"Tab")+" paid · "+money(saleTotal(s))+" by "+m);render();return true}
-    case"reopen":{const s=findSale(b.dataset.id);if(!s)return true;const k="ro"+s.id;if(S.confirm!==k){armConfirm(k);b.textContent="Tap again: not paid";b.classList.add("danger");return true}S.confirm=null;
-      const label=s.label||s.customer||"Reopened";
-      enqueue({k:"rpc",fn:"reopen_sale",args:{p_id:s.id,p_label:label,p_by:S.name},local:[{k:"upd",t:"sales",id:s.id,patch:{status:"open",pay:"Open",paid_at:null,paid_via:null,paid_by:null,label}}]});
-      S.sellView="open";toast("Moved back to open tabs");render();return true}
+    case"saveSale":{
+      const cur=curSession();if(!cur){toast("Open the counter first");render();return true}
+      if(!T.items.length)return true;const ts=Date.now(),tot=ticketTotal();
+      const sale={id:uid(),date:cur.date,ts,items:T.items.map(i=>({...i})),pay:AT_CLOSE,status:"paid",sessionId:cur.id,by:S.name||"",byId:S.uid||""};
+      enqueue({k:"ins",t:"sales",row:toRow("sales",sale)});toast("Sale saved · "+money(tot));
+      newTicket();render();setTimeout(()=>{const q=$("#q");q&&q.focus({preventScroll:true})},0);return true}
+    case"openCounter":openCounter();render();return true;
+    case"startClose":startClose(b.dataset.id);render();setTimeout(()=>{const c=$("#cl_cash");c&&c.focus()},0);return true;
+    case"cancelClose":S.close=null;S.confirm=null;render();return true;
+    case"clAddCredit":S.close.credits.push({id:"cr"+uid(),name:"",amount:""});render();setTimeout(()=>{const c=$("#cl_cn"+(S.close.credits.length-1));c&&c.focus()},0);return true;
+    case"clDelCredit":S.close.credits.splice(+b.dataset.ix,1);render();return true;
+    case"doClose":doClose();return true;
+    case"doneClosed":S.justClosed=null;render();return true;
+    case"pdfReport":{const x=(S.sessions||{})[b.dataset.id];if(x)pdfReport(x);return true}
   }
   return false;
 }
@@ -375,6 +506,66 @@ function changePay(id,m){
   const s=collect("sales","0000-00-00","9999-99-99").find(x=>x.id===id);if(!s||s.pay===m)return;
   enqueue({k:"rpc",fn:"set_sale_payment",args:{p_id:id,p_pay:m,p_by:S.name},local:[{k:"upd",t:"sales",id,patch:{pay:m,paid_via:m,edited_at:Date.now(),edited_by:S.name}}]});
   toast("Payment changed to "+m);
+}
+
+/* ---------- Reports (Admin): every counter session + credit list ---------- */
+function sessPay(x){ // how a closed counter's sales were paid, adding up to its total sales
+  const r=x.report||{},out={};const add=(k,v)=>{v=num(v);if(v)out[k]=(out[k]||0)+v};
+  add("Cash",num(x.cash)+num(x.paidOut));
+  Object.entries(x.mobile||{}).forEach(([k,v])=>add(k,v));
+  (r.collected||[]).forEach(c=>add(c.via,-num(c.amount)));
+  add("Credit (deni)",x.creditTotal);
+  const d=Math.round(num(x.difference));if(d<0)add("Short (missing)",-d);if(d>0)add("Cash",-d);
+  return out;
+}
+function vReports(){
+  if(S.sessErr)return`<h2>Daily reports</h2><div class="banner">Run <b>supabase/9-counter-sessions.sql</b> in the Supabase SQL editor to switch on counter sessions and reports.</div>`;
+  const all=Object.values(S.sessions||{}).sort((a,b)=>b.openedAt-a.openedAt);
+  const oc=openCredits(),owed=oc.reduce((a,c)=>a+creditLeft(c),0);
+  const mobOf=x=>Object.values(x.mobile||{}).reduce((a,v)=>a+num(v),0);
+  return `<div class="row between"><h2>Daily reports</h2></div>
+  <section class="panel">
+    ${all.length?`<div class="tbl"><table><thead><tr><th>Day</th><th>Counter</th><th class="r">Sales</th><th class="r">Cash</th><th class="r">Mobile & card</th><th class="r">Credit</th><th class="r">Difference</th></tr></thead><tbody>
+    ${all.map(x=>x.status==="open"?`<tr class="click" data-act="openReport" data-id="${x.id}"><td><b>${niceDate(x.date)}</b></td><td><span class="pill low">Still open</span><div class="muted small">since ${whenTxt(x.openedAt)}</div></td><td class="r num">${money(sessTotal(x.id))}</td><td colspan="4" class="muted small">Not closed yet</td></tr>`
+      :`<tr class="click" data-act="openReport" data-id="${x.id}"><td><b>${niceDate(x.date)}</b></td><td class="small">${time(x.openedAt)}–${time(x.closedAt)}<div class="muted small">${esc(x.closedBy||"")}</div></td><td class="r num"><b>${money(x.totalSales)}</b></td><td class="r num">${money(num(x.cash)+num(x.paidOut))}</td><td class="r num">${money(mobOf(x))}</td><td class="r num">${money(x.creditTotal)}</td><td class="r"><span class="pill ${diffCls(x.difference)}">${diffTxt(x.difference)}</span></td></tr>`).join("")}
+    </tbody></table></div><p class="muted small" style="margin:0">Tap a day to see its report. Cash includes money taken from the drawer for expenses.</p>`:'<div class="empty">No counters yet. Reports appear here each time a seller closes the counter.</div>'}
+  </section>
+  <section class="panel"><div class="row between"><h3>Credit not paid yet (deni)</h3><b class="num">${money(owed)}</b></div>
+    ${oc.length?`<div class="tbl"><table><thead><tr><th>Name</th><th>Since</th><th class="r">Credit</th><th class="r">Paid back</th><th class="r">Still owes</th></tr></thead><tbody>${oc.map(c=>`<tr><td><b>${esc(c.name)}</b>${c.note?`<div class="muted small">${esc(c.note)}</div>`:""}</td><td class="small">${niceDate(c.date)}</td><td class="r num">${money(c.amount)}</td><td class="r num">${num(c.paidAmount)?money(c.paidAmount):"—"}</td><td class="r num"><b>${money(creditLeft(c))}</b></td></tr>`).join("")}</tbody></table></div>
+    <p class="muted small" style="margin:0">When someone pays back, the seller enters it when closing the counter. It shows as “Old credit paid back” in that day's report.</p>`:'<div class="empty">Nobody owes the shop right now.</div>'}
+  </section>`;
+}
+function reportModal(x){
+  const r=x.report;
+  if(x.status==="open"){const n=sessSales(x.id).length;openModal(`<div style="display:grid;gap:12px"><div class="row between"><h2>${niceDate(x.date)} · still open</h2><button class="btn ghost" data-act="close" aria-label="Close">✕</button></div>
+    <p class="muted small" style="margin:0">Opened ${whenTxt(x.openedAt)}${x.openedBy?" by "+esc(x.openedBy):""} · ${n} sale${n===1?"":"s"} · ${money(sessTotal(x.id))} so far.</p>
+    ${S.readOnly?"":`<div class="row" style="justify-content:flex-end"><button class="btn primary" data-act="adminClose" data-id="${x.id}">Close this counter</button></div>`}</div>`);return}
+  if(!r){openModal(`<h2>${niceDate(x.date)}</h2><p class="muted">No report saved.</p><div class="row" style="justify-content:flex-end"><button class="btn" data-act="close">Close</button></div>`);return}
+  const armed=S.confirm==="reopen"+x.id;
+  openModal(`<div style="display:grid;gap:12px">
+    <div class="row between"><h2>Report · ${niceDate(r.date)}</h2><button class="btn ghost" data-act="close" aria-label="Close">✕</button></div>
+    <p class="muted small" style="margin:0">Opened ${whenTxt(r.openedAt)}${r.openedBy?" by "+esc(r.openedBy):""} · closed ${whenTxt(r.closedAt)}${r.closedBy?" by "+esc(r.closedBy):""} · ${r.count} sales · ${r.bottles} bottles${r.voided?" · "+r.voided+" voided":""}</p>
+    <div class="tbl"><table><tbody>
+      <tr><td><b>Total sales</b></td><td class="r num"><b>${money(r.total)}</b></td></tr>
+      <tr><td>Cash in the drawer</td><td class="r num">${money(r.cash)}</td></tr>
+      ${r.paidOut?`<tr><td>Taken from drawer for expenses</td><td class="r num">${money(r.paidOut)}</td></tr>`:""}
+      ${OTHER_PAY.filter(m=>num((r.mobile||{})[m])).map(m=>`<tr><td>${esc(m)}</td><td class="r num">${money(r.mobile[m])}</td></tr>`).join("")}
+      <tr><td>Credit (deni) given</td><td class="r num">${money(r.creditTotal)}</td></tr>
+      ${r.collectedTotal?`<tr><td>Less: old credit paid back</td><td class="r num">− ${money(r.collectedTotal)}</td></tr>`:""}
+      <tr><td><b>Difference</b></td><td class="r"><span class="pill ${diffCls(r.diff)}">${diffTxt(r.diff)}</span></td></tr>
+    </tbody></table></div>
+    ${(r.credits||[]).length?`<h3>Credit given</h3><div class="tbl"><table><tbody>${r.credits.map(c=>`<tr><td>${esc(c.name)}</td><td class="r num">${money(c.amount)}</td></tr>`).join("")}</tbody></table></div>`:""}
+    ${(r.collected||[]).length?`<h3>Old credit paid back</h3><div class="tbl"><table><tbody>${r.collected.map(c=>`<tr><td>${esc(c.name)} <span class="muted small">${c.from?"from "+niceDate(c.from)+" · ":""}${esc(c.via)}</span></td><td class="r num">${money(c.amount)}</td></tr>`).join("")}</tbody></table></div>`:""}
+    ${r.note?`<div class="banner">${esc(r.note)}</div>`:""}
+    <h3>Items sold</h3><div class="tbl" style="max-height:260px;overflow:auto"><table><tbody>${(r.lines||[]).map(l=>`<tr><td>${esc(l.name)} <span class="muted small">${esc(l.size||"")}</span></td><td class="r num">${l.qty}</td><td class="r num">${money(l.amount)}</td></tr>`).join("")||'<tr><td class="muted">No sales</td></tr>'}</tbody></table></div>
+    <div class="row between">${ADM()?`<button class="btn ghost${armed?" danger":""}" data-act="reopenSession" data-id="${x.id}">${armed?"Tap again to reopen":"Reopen counter"}</button>`:"<span></span>"}<button class="btn primary" data-act="pdfReport" data-id="${x.id}">Download PDF</button></div>
+  </div>`);
+}
+function reopenSession(x){
+  const local=[{k:"upd",t:"counter_sessions",id:x.id,patch:{status:"open",closed_at:null,closed_by:null,closed_by_id:null,total_sales:null,cash:null,paid_out:null,mobile:null,credit_total:null,collected_total:null,difference:null,report:null}}];
+  Object.values(S.credits||{}).filter(c=>c.sessionId===x.id&&!num(c.paidAmount)).forEach(c=>local.push({k:"del",t:"credits",id:c.id}));
+  enqueue({k:"rpc",fn:"reopen_session",args:{p_id:x.id},local});
+  closeModal();toast(niceDate(x.date)+" reopened — close it again from the Sell screen");refreshSoon();
 }
 
 function vCountAll(){
@@ -452,12 +643,14 @@ function vSummary(){
   const rev=sales.reduce((a,s)=>a+saleTotal(s),0),cogs=sales.reduce((a,s)=>a+saleCost(s),0);
   const gross=rev-cogs,opex=ex.reduce((a,e)=>a+num(e.amount),0),net=gross-opex;
   const bought=rs.reduce((a,r)=>a+num(r.qty)*num(r.unitCost),0);
-  const byPay={};sales.forEach(s=>byPay[s.pay]=(byPay[s.pay]||0)+saleTotal(s));
+  const byPay={};sales.forEach(s=>{if(s.sessionId&&s.pay===AT_CLOSE){const x=(S.sessions||{})[s.sessionId];if(x&&x.status==="closed")return;byPay["Counter not closed yet"]=(byPay["Counter not closed yet"]||0)+saleTotal(s);return}byPay[s.pay]=(byPay[s.pay]||0)+saleTotal(s)});
+  Object.values(S.sessions||{}).filter(x=>x.status==="closed"&&x.date>=from&&x.date<=to).forEach(x=>{const sp=sessPay(x);for(const k in sp)byPay[k]=(byPay[k]||0)+sp[k]});
+  for(const k in byPay)if(byPay[k]<=0)delete byPay[k];
   const pays=Object.entries(byPay).sort((a,b)=>b[1]-a[1]);
   const prod={};sales.forEach(s=>s.items.forEach(i=>{const k=i.pid;prod[k]=prod[k]||{name:i.name,size:i.size,qty:0,rev:0,gp:0};prod[k].qty+=num(i.qty);prod[k].rev+=num(i.qty)*num(i.price);prod[k].gp+=num(i.qty)*(num(i.price)-num(i.cost))}));
   const top=Object.values(prod).sort((a,b)=>b.rev-a.rev).slice(0,8);
-  const owing=collect("sales","0000-00-00","9999-99-99").filter(isOpenSale);
-  const owed=owing.reduce((a,s)=>a+saleTotal(s),0);
+  const owing=collect("sales","0000-00-00","9999-99-99").filter(isOpenSale),oc=openCredits();
+  const owed=owing.reduce((a,s)=>a+saleTotal(s),0)+oc.reduce((a,c)=>a+creditLeft(c),0);
   const pct=rev?Math.round(gross/rev*100):0;
   return `
   <div class="row between"><h2>Profit · ${label}</h2>
@@ -475,7 +668,8 @@ function vSummary(){
       <div class="row between small" style="border-top:1px solid var(--line);padding-top:10px"><span>Spent on new stock</span><b class="num">${money(bought)}</b></div>
     </section>
     <section class="panel"><div class="row between"><h3>Unpaid credit (deni)</h3><b class="num">${money(owed)}</b></div>
-      ${owing.length?`<div class="tbl"><table><tbody>${owing.map(s=>`<tr><td><b>${esc(s.customer||"Unnamed")}</b><div class="muted small">${niceDate(s.date)} · ${s.items.map(i=>esc(i.qty+"× "+i.name)).join(", ")}</div></td><td class="r num">${money(saleTotal(s))}</td><td class="r">${S.readOnly?"":`<button class="btn small" data-act="paid" data-id="${s.id}" data-doc="${s._doc}">Mark paid</button>`}</td></tr>`).join("")}</tbody></table></div>`:'<div class="empty">Nobody owes the shop right now.</div>'}
+      ${oc.length?`<div class="tbl"><table><tbody>${oc.map(c=>`<tr><td><b>${esc(c.name)}</b><div class="muted small">Since ${niceDate(c.date)}</div></td><td class="r num">${money(creditLeft(c))}</td><td></td></tr>`).join("")}</tbody></table></div><p class="muted small" style="margin:0">Collected when a seller closes the counter. Full list in <b>Reports</b>.</p>`:""}
+      ${owing.length?`<div class="tbl"><table><tbody>${owing.map(s=>`<tr><td><b>${esc(s.customer||"Unnamed")}</b><div class="muted small">${niceDate(s.date)} · ${s.items.map(i=>esc(i.qty+"× "+i.name)).join(", ")}</div></td><td class="r num">${money(saleTotal(s))}</td><td class="r">${S.readOnly?"":`<button class="btn small" data-act="paid" data-id="${s.id}" data-doc="${s._doc}">Mark paid</button>`}</td></tr>`).join("")}</tbody></table></div>`:oc.length?"":'<div class="empty">Nobody owes the shop right now.</div>'}
     </section>
   </div>
   <section class="panel"><h3>Best sellers · ${label}</h3>
@@ -617,7 +811,7 @@ function vProducts(){
 /* ---------- sign-in: Admin & Seller (each person has their own username + password) ---------- */
 const ADM=()=>S.role==="admin"&&!S.readOnly;
 const canVoid=s=>!S.readOnly&&(ADM()||(s.byId&&s.byId===S.uid&&Date.now()-s.ts<10*6e4));
-const TABS_SELLER=["sell","sales","stock","orders","expenses"];
+const TABS_SELLER=["sell","expenses","orders"];
 const tabOk=t=>S.role==="admin"?true:TABS_SELLER.includes(t);
 const access=()=>((S.settingsRows||{}).access||{}).value||{};
 const STAFF_DOMAIN="staff.thecave.local";
@@ -887,7 +1081,7 @@ function editSaleForm(s,doc){
   <div class="tbl"><table><thead><tr><th>Item</th><th class="r">Qty</th><th class="r">Price each</th><th class="r">Remove</th></tr></thead><tbody>
   ${s.items.map((i,ix)=>`<tr><td>${esc(i.name)} <span class="muted small">${esc(i.size||"")}</span></td><td class="r"><input type="text" inputmode="numeric" class="priceIn num" style="width:56px!important" name="q${ix}" id="eq${ix}" value="${i.qty}"></td><td class="r"><input type="text" inputmode="numeric" class="priceIn num" style="width:96px!important" name="p${ix}" id="ep${ix}" value="${i.price}"></td><td class="r"><input type="checkbox" name="x${ix}" id="ex${ix}" aria-label="Remove ${esc(i.name)}"></td></tr>`).join("")}
   </tbody></table></div>
-  <div class="grid2"><label class="f">Paid by<select name="pay" id="e_pay">${opt(isOpenSale(s)?[s.pay]:METHODS,s.pay)}</select></label><label class="f">Customer (for credit)<input type="text" name="customer" id="e_cust" value="${esc(s.customer||"")}"></label></div>
+  <div class="grid2"><label class="f">Paid by<select name="pay" id="e_pay">${opt(isOpenSale(s)?[s.pay]:METHODS.includes(s.pay)?METHODS:[s.pay,...METHODS],s.pay)}</select></label><label class="f">Customer (for credit)<input type="text" name="customer" id="e_cust" value="${esc(s.customer||"")}"></label></div>
   <div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-act="close">Cancel</button><button class="btn primary">Save changes</button></div></form>`);
 }
 function voidForm(s,doc){
@@ -1128,6 +1322,10 @@ document.addEventListener("click",e=>{
   if(a==="closeTab"&&sellAct(a,b))return;
   switch(a){
     case"close":closeModal();break;
+    case"pdfReport":{const x=(S.sessions||{})[b.dataset.id];if(x)pdfReport(x);break}
+    case"openReport":{const x=(S.sessions||{})[b.dataset.id];if(x){S.confirm=null;reportModal(x)}break}
+    case"adminClose":closeModal();startClose(b.dataset.id);render();break;
+    case"reopenSession":{const x=(S.sessions||{})[b.dataset.id];if(!x)break;const k="reopen"+x.id;if(S.confirm!==k){S.confirm=k;reportModal(x);setTimeout(()=>{if(S.confirm===k){S.confirm=null}},4000);break}S.confirm=null;reopenSession(x);break}
     case"cat":S.cat=b.dataset.v;render();break;
     case"sf":S.stockFilter=b.dataset.v;render();break;
     case"period":S.period=b.dataset.v;render();break;
@@ -1205,6 +1403,7 @@ document.addEventListener("click",e=>{
 });
 document.addEventListener("input",e=>{
   const t=e.target;
+  if(t.dataset&&t.dataset.cl){closeInput(t);return}
   if(t.id==="q"){S.q=t.value;const g=$("#pgrid");const pos=t.selectionStart;render();const q=$("#q");if(q){q.focus();try{q.setSelectionRange(pos,pos)}catch(_){}}return}
   if(t.id==="cust"){S.customer=t.value;return}
   if(t.id==="tabname"){S.ticket.label=t.value;return}
@@ -1217,6 +1416,7 @@ document.addEventListener("input",e=>{
   if(t.dataset&&t.dataset.act==="price"){const i=S.ticket.items[+t.dataset.ix];if(i){i.price=num(t.value);S.ticket.dirty=true;const el=document.querySelector(".ticket .total .num");if(el)el.textContent=money(ticketTotal());const lt=t.closest(".tline").querySelector(".lt");if(lt)lt.textContent=money(i.qty*i.price)}}
 });
 document.addEventListener("change",e=>{
+  if(e.target.dataset&&e.target.dataset.clv){const C=S.close,id=e.target.dataset.clv;if(C){C.collected[id]={...(C.collected[id]||{amount:""}),via:e.target.value};updateCloseSum()}return}
   if(e.target.dataset&&e.target.dataset.paysel){changePay(e.target.dataset.paysel,e.target.value);return}
   if(e.target.id==="autolock"){saveAccessSetting({autoLockMin:num(e.target.value)});toast("Auto-lock updated");return}
   {const t=e.target;if(t.id==="spay"){S.spay=t.value;render();return}if(t.id==="sby"){S.sby=t.value;render();return}if(t.id==="sfrom"){S.sfrom=t.value;render();return}if(t.id==="sto"){S.sto=t.value;render();return}if(t.id==="showVoid"){S.showVoid=t.checked;render();return}}
@@ -1297,7 +1497,7 @@ document.addEventListener("submit",async e=>{
 async function boot(){
   render();renderLock();
   const cache=await idb.get("cache");
-  if(cache&&cache.srv){S.srv={...S.srv,...cache.srv};S.loadedFrom=cache.loadedFrom;S.status="ok";rebuild()}
+  if(cache&&cache.srv){S.srv={...S.srv,...cache.srv,counter_sessions:cache.srv.counter_sessions||{},credits:cache.srv.credits||{}};S.loadedFrom=cache.loadedFrom;S.status="ok";rebuild()}
   if(!window.supabase||!CFG.url||!CFG.anonKey){S.status="ok";S.accessLoaded=true;renderLock();return}
   S.client=supabase.createClient(CFG.url,CFG.anonKey,{auth:{persistSession:true,autoRefreshToken:true,storageKey:"cave-main"}});
   S.accessLoaded=true;
@@ -1312,5 +1512,6 @@ async function boot(){
   startSession(session.user.id,prof);renderStatus();
 }
 boot();
+if("serviceWorker" in navigator&&location.protocol.startsWith("http")){let swReloaded=false;navigator.serviceWorker.addEventListener("controllerchange",()=>{if(swReloaded||S.queue.length)return;swReloaded=true;location.reload()})}
 if("serviceWorker" in navigator&&location.protocol.startsWith("http"))navigator.serviceWorker.register("sw.js").then(r=>{r.addEventListener("updatefound",()=>{const w=r.installing;w&&w.addEventListener("statechange",()=>{if(w.state==="installed"&&navigator.serviceWorker.controller)toast("A new version is ready — it loads next time you open the app")})})}).catch(()=>{});
 })();
