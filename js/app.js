@@ -300,9 +300,7 @@ function vSell(){
     <section class="panel addp">
       <div class="searchwrap"><input type="search" id="q" placeholder="Type a drink name…" value="${esc(S.q)}" autocomplete="off" aria-label="Search drinks"></div>
       ${S.q?`<div class="plist">${matches.length?matches.map((p,i)=>prow(p,sm,i===0)).join(""):'<div class="empty">No drink matches “'+esc(S.q)+'”.</div>'}</div>`
-        :(()=>{const quick=prodList().filter(p=>sm[p.id]>0).sort((a,b)=>(a.rank||999)-(b.rank||999)).slice(0,12);
-          return quick.length?`<div class="qstrip" aria-label="Best sellers">${quick.map(p=>{const inT=T.items.find(i=>i.pid===p.id);return`<button class="qpill${inT?" on":""}${S.flash===p.id?" flash":""}" data-act="add" data-id="${p.id}"><span class="qn">${esc(p.name)}${p.size?` <span class="muted">${esc(p.size)}</span>`:""}</span><span class="num qp">${Math.round(num(p.price)).toLocaleString("en-US")}</span>${inT?`<span class="qc num">${inT.qty}</span>`:""}</button>`}).join("")}</div>
-          <div class="muted small">Not here? Type the drink's name above.</div>`:`<div class="empty bigempty">Type the first letters of the drink, then tap it to add it to the sale.</div>`})()}
+        :`<div class="empty bigempty">Type the first letters of the drink, then tap it to add it to the sale.</div>`}
     </section>
     <section class="panel ticket">
       <div class="row between"><h3>New sale${nItems?` <span class="pill n num">${nItems} item${nItems===1?"":"s"}</span>`:""}</h3>${T.items.length?`<button class="btn ghost small" data-act="clearTicket">Clear</button>`:""}</div>
@@ -799,13 +797,16 @@ function vHistory(){
 }
 
 function vProducts(){
-  const all=prodList();
+  const every=prodList(),q=(S.pq||"").trim().toLowerCase(),words=q.split(/\s+/).filter(Boolean);
+  const all=words.length?every.filter(p=>{const h=(p.name+" "+(p.size||"")+" "+p.cat+" "+(p.supplier||"")).toLowerCase();return words.every(w=>h.includes(w))}):every;
   return `
   <div class="row between"><h2>Products & prices</h2>${!ADM()?"":'<button class="btn primary" data-act="newProd">Add product</button>'}</div>
-  <p class="muted small" style="margin:0">${all.length} products · margins under 10% are flagged red so you can check the price.</p>
-  <section class="panel">${all.length?`<div class="tbl"><table><thead><tr><th>Product</th><th>Type</th><th class="r">Buy</th><th class="r">Sell</th><th class="r">Margin</th><th></th></tr></thead><tbody>
+  <p class="muted small" style="margin:0">${every.length} products · margins under 10% are flagged red so you can check the price.</p>
+  <section class="panel"><div class="searchwrap"><input type="search" id="pq" placeholder="Search products… name, size, type or supplier" value="${esc(S.pq||"")}" autocomplete="off" aria-label="Search products"></div>
+  ${q?`<div class="muted small">${all.length} of ${every.length} products match “${esc(S.pq.trim())}”</div>`:""}
+  ${all.length?`<div class="tbl"><table><thead><tr><th>Product</th><th>Type</th><th class="r">Buy</th><th class="r">Sell</th><th class="r">Margin</th><th></th></tr></thead><tbody>
   ${all.map(p=>{const mg=num(p.price)?Math.round((num(p.price)-num(p.cost))/num(p.price)*100):0;return`<tr><td><b>${esc(p.name)}</b> <span class="muted small">${esc(p.size||"")}</span></td><td class="muted">${esc(p.cat)}${p.supplier?`<div class="small">${esc(p.supplier)}</div>`:""}</td><td class="r num">${money(p.cost)}</td><td class="r num">${money(p.price)}</td><td class="r num"><span class="pill ${mg<10?"out":mg<18?"low":"ok"}">${mg}%</span></td><td class="r">${!ADM()?"":`<button class="btn ghost small" data-act="editProd" data-id="${p.id}">Edit</button>`}</td></tr>`}).join("")}
-  </tbody></table></div>`:'<div class="empty">No products yet. Add the drinks you sell.</div>'}</section>`;
+  </tbody></table></div>`:q?'<div class="empty">No product matches that search.</div>':'<div class="empty">No products yet. Add the drinks you sell.</div>'}</section>`;
 }
 
 /* ---------- sign-in: Admin & Seller (each person has their own username + password) ---------- */
@@ -1410,6 +1411,7 @@ document.addEventListener("input",e=>{
   if(t.id==="sq"){S.sq=t.value;render();return}
   if(t.id==="teamq"){S.teamQ=t.value;render();return}
   if(t.id==="oq"){S.oq=t.value;render();return}
+  if(t.id==="pq"){S.pq=t.value;render();return}
   if(t.dataset&&t.dataset.gsup){S.gsup[t.dataset.gsup]=t.value;const btn=t.closest(".panel").querySelector('[data-act="createOrder"]');if(btn)btn.textContent="Create order"+(t.value.trim()?" for "+t.value.trim():"");return}
   if(t.dataset&&(t.dataset.dq||t.dataset.dc)){const pid=t.dataset.dq||t.dataset.dc;if(S.draft[pid]){S.draft[pid][t.dataset.dq?"qty":"cost"]=t.value.replace(/[^0-9]/g,"");render()}return}
   if(t.dataset&&t.dataset.cnt){const had=(S.counts[t.dataset.cnt]??"")!=="";S.counts[t.dataset.cnt]=t.value.replace(/[^0-9]/g,"");if(had!==(S.counts[t.dataset.cnt]!=="")){const n=Object.values(S.counts).filter(v=>v!=="").length,btn=document.querySelector('[data-act="saveCounts"]');if(btn){btn.disabled=!n;btn.textContent="Save "+(n||"")+" count"+(n===1?"":"s")}}return}
