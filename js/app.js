@@ -580,6 +580,39 @@ function vCountAll(){
     </tbody></table></div>
   </section>`;
 }
+
+/* ---------- filter & sort bar (Stock and Products pages) ---------- */
+const SORTS={
+  stock:[["type","Type, then name"],["name","Name A–Z"],["qtyLo","On hand: fewest first"],["qtyHi","On hand: most first"],["valHi","Value at cost: highest first"],["supplier","Supplier"]],
+  prod:[["type","Type, then name"],["name","Name A–Z"],["sellHi","Sell price: highest first"],["sellLo","Sell price: lowest first"],["buyHi","Buy price: highest first"],["mgLo","Margin: lowest first"],["mgHi","Margin: highest first"],["supplier","Supplier"]]};
+["stCat","stSup","stSort","pCat","pSup","pSort"].forEach(k=>{if(S[k]===undefined)S[k]=ls("cave_"+k)||""});
+const margin=p=>num(p.price)?(num(p.price)-num(p.cost))/num(p.price):0;
+function applyFilterSort(list,pre,kind,sm){
+  const cat=S[pre+"Cat"],sup=S[pre+"Sup"],by=S[pre+"Sort"]||"type";
+  let out=list.filter(p=>(!cat||p.cat===cat)&&(!sup||(sup==="—none—"?!(p.supplier||"").trim():(p.supplier||"").trim()===sup)));
+  const nm=(a,b)=>a.name.localeCompare(b.name)||String(a.size||"").localeCompare(String(b.size||""));
+  const ty=(a,b)=>(CATS.indexOf(a.cat)-CATS.indexOf(b.cat))||nm(a,b);
+  const q=p=>num(sm&&sm[p.id]);
+  const cmp={type:ty,name:nm,
+    qtyLo:(a,b)=>q(a)-q(b)||nm(a,b),qtyHi:(a,b)=>q(b)-q(a)||nm(a,b),
+    valHi:(a,b)=>Math.max(0,q(b))*num(b.cost)-Math.max(0,q(a))*num(a.cost)||nm(a,b),
+    sellHi:(a,b)=>num(b.price)-num(a.price)||nm(a,b),sellLo:(a,b)=>num(a.price)-num(b.price)||nm(a,b),
+    buyHi:(a,b)=>num(b.cost)-num(a.cost)||nm(a,b),
+    mgLo:(a,b)=>margin(a)-margin(b)||nm(a,b),mgHi:(a,b)=>margin(b)-margin(a)||nm(a,b),
+    supplier:(a,b)=>((a.supplier||"").trim()?0:1)-((b.supplier||"").trim()?0:1)||(a.supplier||"").localeCompare(b.supplier||"")||nm(a,b)}[by]||ty;
+  return out.sort(cmp);
+}
+function filterBar(pre,kind,all){
+  const cats=CATS.filter(c=>all.some(p=>p.cat===c)),sups=[...new Set(all.map(p=>(p.supplier||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  const noSup=all.some(p=>!(p.supplier||"").trim()),opt=(v,l,cur)=>`<option value="${esc(v)}"${cur===v?" selected":""}>${esc(l)}</option>`;
+  const cur=k=>S[pre+k]||"",active=cur("Cat")||cur("Sup");
+  return `<div class="fbar">
+    <label class="f">Type<select data-fsel="${pre}Cat">${opt("","All types",cur("Cat"))}${cats.map(c=>opt(c,c,cur("Cat"))).join("")}</select></label>
+    <label class="f">Supplier<select data-fsel="${pre}Sup">${opt("","All suppliers",cur("Sup"))}${sups.map(c=>opt(c,c,cur("Sup"))).join("")}${noSup?opt("—none—","No supplier set",cur("Sup")):""}</select></label>
+    <label class="f">Sort by<select data-fsel="${pre}Sort">${SORTS[kind].map(([v,l])=>opt(v,l,cur("Sort")||"type")).join("")}</select></label>
+    ${active?`<button class="btn ghost small" data-act="fclear" data-v="${pre}">Clear filters</button>`:""}
+  </div>`;
+}
 function vStock(){
   if(S.countMode)return vCountAll();
   const sm=stockMap(),all=prodList(),oo=onOrderMap();
@@ -587,19 +620,21 @@ function vStock(){
   all.forEach(p=>{const q=sm[p.id],st=status(p,q)[1];if(st==="Low")counts.Low++;if(st==="Out")counts.Out++;value+=Math.max(0,q)*num(p.cost)});
   const q=(S.stq||"").trim().toLowerCase(),words=q.split(/\s+/).filter(Boolean);
   const hit=p=>{const h=(p.name+" "+(p.size||"")+" "+(p.cat||"")+" "+(p.supplier||"")).toLowerCase();return words.every(w=>h.includes(w))};
-  const list=all.filter(p=>(S.stockFilter==="All"||status(p,sm[p.id])[1]===S.stockFilter)&&hit(p));
+  const list=applyFilterSort(all.filter(p=>(S.stockFilter==="All"||status(p,sm[p.id])[1]===S.stockFilter)&&hit(p)),"st","stock",sm);
+  const narrowed=q||S.stCat||S.stSup;
   const neverCounted=all.filter(p=>p.needsCount).length;
   return `
   <div class="row between"><h2>Stock</h2><div class="row"><span class="muted small">On hand at cost: <b class="num">${money(value)}</b></span>${!ADM()?"":`<button class="btn" data-act="countAll">Count all</button><button class="btn primary" data-act="startOrder">Order low stock${needsOrder().length?" ("+needsOrder().length+")":""}</button>`}</div></div>
   ${neverCounted?`<div class="banner">${neverCounted} product${neverCounted>1?"s":""} still need${neverCounted>1?"":"s"} a fresh count. Figures shown come from the paper stock take of 17 July, so they don't include anything sold since. Use <b>Count all</b> to enter what's on the shelf and in the store room — from then on, sales and restocks update the numbers automatically.</div>`:""}
   <section class="panel">
     <div class="searchwrap"><input type="search" id="stq" placeholder="Search stock… name, size, type or supplier" value="${esc(S.stq||"")}" autocomplete="off" aria-label="Search stock"></div>
-    ${q?`<div class="muted small">${list.length} product${list.length===1?"":"s"} match “${esc(S.stq.trim())}”${S.stockFilter==="All"?"":" in "+S.stockFilter}</div>`:""}
+    ${filterBar("st","stock",all)}
+    ${narrowed?`<div class="muted small">${list.length} product${list.length===1?"":"s"}${q?" match “"+esc(S.stq.trim())+"”":""}${S.stCat?" · "+esc(S.stCat):""}${S.stSup?" · "+esc(S.stSup==="—none—"?"no supplier":S.stSup):""}${S.stockFilter==="All"?"":" · "+S.stockFilter}</div>`:""}
     <div class="chips">${["All","Low","Out","OK"].map(c=>`<button class="chip" data-act="sf" data-v="${c}" aria-pressed="${S.stockFilter===c}">${c}${c==="Low"&&counts.Low?" ("+counts.Low+")":""}${c==="Out"&&counts.Out?" ("+counts.Out+")":""}</button>`).join("")}</div>
     ${list.length?`<div class="tbl"><table><thead><tr><th>Product</th><th class="r">On hand</th><th>Status</th><th class="r">Reorder at</th><th class="r">On order</th><th></th></tr></thead><tbody>
     ${list.map(p=>{const q=sm[p.id],[c,l]=status(p,q);return`<tr><td><b>${esc(p.name)}</b> <span class="muted small">${esc(p.size||"")}</span><div class="muted small">${p.countedAt&&!p.needsCount?"Counted "+niceDate(ymd(new Date(p.countedAt))):p.countSource?"From paper stock take, 17 Jul — please recount":"Not counted yet"}</div></td><td class="r num"><b>${q}</b></td><td><span class="pill ${c}">${l}</span></td><td class="r num muted">${num(p.reorder)}</td><td class="r num">${oo[p.id]||""}</td>
     <td class="r"><div class="row" style="justify-content:flex-end;flex-wrap:nowrap">${!ADM()?"":`<button class="btn small" data-act="restock" data-id="${p.id}">Restock</button><button class="btn ghost small" data-act="count" data-id="${p.id}">Count</button>`}</div></td></tr>`}).join("")}
-    </tbody></table></div>`:(q?`<div class="empty">No products match “${esc(S.stq.trim())}”.</div>`:'<div class="empty">Nothing here.</div>')}
+    </tbody></table></div>`:(narrowed?`<div class="empty">No products match these filters.</div>`:'<div class="empty">Nothing here.</div>')}
   </section>
   ${recentRestocks()}`;
 }
@@ -802,15 +837,17 @@ function vHistory(){
 
 function vProducts(){
   const every=prodList(),q=(S.pq||"").trim().toLowerCase(),words=q.split(/\s+/).filter(Boolean);
-  const all=words.length?every.filter(p=>{const h=(p.name+" "+(p.size||"")+" "+p.cat+" "+(p.supplier||"")).toLowerCase();return words.every(w=>h.includes(w))}):every;
+  const all=applyFilterSort(words.length?every.filter(p=>{const h=(p.name+" "+(p.size||"")+" "+p.cat+" "+(p.supplier||"")).toLowerCase();return words.every(w=>h.includes(w))}):every,"p","prod");
+  const narrowed=q||S.pCat||S.pSup;
   return `
   <div class="row between"><h2>Products & prices</h2>${!ADM()?"":'<button class="btn primary" data-act="newProd">Add product</button>'}</div>
   <p class="muted small" style="margin:0">${every.length} products · margins under 10% are flagged red so you can check the price.</p>
   <section class="panel"><div class="searchwrap"><input type="search" id="pq" placeholder="Search products… name, size, type or supplier" value="${esc(S.pq||"")}" autocomplete="off" aria-label="Search products"></div>
-  ${q?`<div class="muted small">${all.length} of ${every.length} products match “${esc(S.pq.trim())}”</div>`:""}
+  ${filterBar("p","prod",every)}
+  ${narrowed?`<div class="muted small">${all.length} of ${every.length} products${q?" match “"+esc(S.pq.trim())+"”":""}${S.pCat?" · "+esc(S.pCat):""}${S.pSup?" · "+esc(S.pSup==="—none—"?"no supplier":S.pSup):""}</div>`:""}
   ${all.length?`<div class="tbl"><table><thead><tr><th>Product</th><th>Type</th><th class="r">Buy</th><th class="r">Sell</th><th class="r">Margin</th><th></th></tr></thead><tbody>
   ${all.map(p=>{const mg=num(p.price)?Math.round((num(p.price)-num(p.cost))/num(p.price)*100):0;return`<tr><td><b>${esc(p.name)}</b> <span class="muted small">${esc(p.size||"")}</span></td><td class="muted">${esc(p.cat)}${p.supplier?`<div class="small">${esc(p.supplier)}</div>`:""}</td><td class="r num">${money(p.cost)}</td><td class="r num">${money(p.price)}</td><td class="r num"><span class="pill ${mg<10?"out":mg<18?"low":"ok"}">${mg}%</span></td><td class="r">${!ADM()?"":`<button class="btn ghost small" data-act="editProd" data-id="${p.id}">Edit</button>`}</td></tr>`}).join("")}
-  </tbody></table></div>`:q?'<div class="empty">No product matches that search.</div>':'<div class="empty">No products yet. Add the drinks you sell.</div>'}</section>`;
+  </tbody></table></div>`:narrowed?'<div class="empty">No product matches these filters.</div>':'<div class="empty">No products yet. Add the drinks you sell.</div>'}</section>`;
 }
 
 /* ---------- sign-in: Admin & Seller (each person has their own username + password) ---------- */
@@ -1333,6 +1370,7 @@ document.addEventListener("click",e=>{
     case"reopenSession":{const x=(S.sessions||{})[b.dataset.id];if(!x)break;const k="reopen"+x.id;if(S.confirm!==k){S.confirm=k;reportModal(x);setTimeout(()=>{if(S.confirm===k){S.confirm=null}},4000);break}S.confirm=null;reopenSession(x);break}
     case"cat":S.cat=b.dataset.v;render();break;
     case"sf":S.stockFilter=b.dataset.v;render();break;
+    case"fclear":{const p=b.dataset.v;[p+"Cat",p+"Sup"].forEach(k=>{S[k]="";ls("cave_"+k,"")});if(p==="st")S.stq="";else S.pq="";render();break}
     case"period":S.period=b.dataset.v;render();break;
     case"hy":S.hy=b.dataset.v;render();break;
     case"loadHist":importHistory();break;
@@ -1425,6 +1463,7 @@ document.addEventListener("input",e=>{
 document.addEventListener("change",e=>{
   if(e.target.dataset&&e.target.dataset.clv){const C=S.close,id=e.target.dataset.clv;if(C){C.collected[id]={...(C.collected[id]||{amount:""}),via:e.target.value};updateCloseSum()}return}
   if(e.target.dataset&&e.target.dataset.paysel){changePay(e.target.dataset.paysel,e.target.value);return}
+  if(e.target.dataset&&e.target.dataset.fsel){const k=e.target.dataset.fsel;S[k]=e.target.value;ls("cave_"+k,e.target.value);render();return}
   if(e.target.id==="autolock"){saveAccessSetting({autoLockMin:num(e.target.value)});toast("Auto-lock updated");return}
   {const t=e.target;if(t.id==="spay"){S.spay=t.value;render();return}if(t.id==="sby"){S.sby=t.value;render();return}if(t.id==="sfrom"){S.sfrom=t.value;render();return}if(t.id==="sto"){S.sto=t.value;render();return}if(t.id==="showVoid"){S.showVoid=t.checked;render();return}}
   if(e.target.dataset&&e.target.dataset.don){const d=S.draft[e.target.dataset.don];if(d){d.on=e.target.checked;render()}return}
